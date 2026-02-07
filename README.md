@@ -2,13 +2,14 @@
 
 ### Overview
 
-RushX (Rust Shell - eXtended) is a POSIX-compliant *NIX shell and terminal implemented in Rust, focusing on low-level control over process creation, PTY management, job control, and terminal I/O. Rather than delegating behavior to external helpers, RushX directly interfaces with the operating system to manage sessions, process groups, signals, and controlling terminals. This approach enables precise control over foreground and background jobs while maintaining strong safety guarantees through Rust.
+RushX (Rust Shell - eXtended) is a POSIX-compliant \*NIX <ins>**terminal emulator**</ins> & <ins>**shell**</ins> implemented in Rust, focusing on low-level control over process creation, PTY management, job control, and terminal I/O. Rather than delegating behavior to external helpers, RushX directly interfaces with the operating system to manage sessions, process groups, signals, and controlling terminals. This approach enables precise control over foreground and background jobs while maintaining strong safety guarantees through Rust.
 
-RushX is architected as a modular shell runtime, with clearly defined stages for lexical analysis, parsing, expansion, and execution. The execution engine is designed to handle pipelines, redirections, and builtins while maintaining POSIX semantics. Terminal handling is tightly integrated with the job-control layer, allowing RushX to function as both an interactive shell and a terminal driver.
+RushX is architected as a modular shell runtime, with clearly defined stages for lexical analysis, parsing, expansion, and execution. The execution engine is designed to handle pipelines, redirections, and builtins while maintaining POSIX semantics. Terminal handling is tightly integrated with the job-control layer, allowing RushX to function as both a terminal driver and an interactive terminal.
 
 > Developed & Maintained by [The HaiKaw Pr0tocol](https://github.com/The-HaiKaw-Pr0tocol) organization.
 
 ## RushX's Logo
+
 <div align="center">
     <img alt="RushX's Logo" src="https://github.com/user-attachments/assets/502b94f8-c209-4fc8-af59-ff6e952603ca" width="1000"/>
 </div>
@@ -65,3 +66,61 @@ RushX is architected as a modular shell runtime, with clearly defined stages for
 </table>
 
 </div>
+
+## Proposed Architecture & Lifecycle _(for now)_
+
+> [!IMPORTANT]
+> This represents our current architectural vision for RushX. As development progresses, this design may evolve based on implementation discoveries.
+
+<div align="center">
+
+![RushX's Lifecycle](./assets/RushX_Lifecycle.png)
+
+*_Figure 1: **RushX Terminal & Shell Command Execution Lifecycle** - Architecture diagram depicting a five-phase process flow:_*
+
+</div>
+
+RushX operates mainly:
+
+1. The **RushX terminal emulator**.
+2. The **RushX shell**.
+
+### **I. Terminal Setup & Process Initialization**
+
+RushX begins with **process spawning** via `fork()` to establish the shell runtime, immediately followed by **PTY pair allocation** using `openpty()` or similar system calls. This creates the master-slave pseudoterminal infrastructure essential for terminal I/O redirection and job control.
+
+During initialization, the shell environment construction involves parsing relative `.rushxrc` configuration files, establishing environment variables, setting up signal handlers, and preparing the **interactive prompt interface**. The underlying **"plumbing"** infrastructure establishes mainly the file descriptor mappings to the PTY slave.
+
+---
+
+### **II. REPL Loop & Command Processing**
+
+The **REPL implementation** centers around efficient **byte stream processing**. All input is catched by the emulator, passedto the PTY Master, then forwarded. RushX performs **lexical analysis** on the input stream, breaking it into tokens while handling special characters, quotes, escape sequences, and command separators.
+
+**Syntactic parsing** follows immediately, where RushX constructs an **abstract syntax tree (AST)** representing command structures, pipelines, redirections, and control flow. For complex commands like a classic `ls -la | grep pattern > output.txt`, the parser identifies distinct processes, establishes pipeline relationships, and validates syntax before execution planning.
+
+The shell maintains **foreground process group control** over the PTY slave during this phase.
+
+---
+
+### **III. Command Execution & Process Management**
+
+RushX's shell process spawns child processes accordingly and maintains **file descriptor inheritance** and **signal mask configuration**. The parent process immediately transfers **PTY slave ownership** to the child through `tcsetpgrp()`, to ensure proper foreground hand-off and proper job control semantics.
+
+A classic **Program overlay** follows via the `execve()` family of system calls, to perform **process image replacement**. The child process inherits the program binary, along with properly configured **environment variables**, **file descriptors**, and **signal dispositions** according to POSIX specifications.
+
+---
+
+### **IV. Process Termination & Resource Recovery**
+
+Upon command completion, child processes terminate through `exit()` system calls, triggering **SIGCHLD signal delivery** to the parent shell process. RushX **signal handlers** respond afterwards to these notifications, preventing zombie process accumulation through a proper **wait() system call**.
+
+The shell performs **exit status collection**, **resource deallocation**, and **PTY ownership recovery** via `tcsetpgrp()` to restore PTY Slave control to the shell process. **Process group cleanup** ensures all background processes are properly managed according to job control specifications.
+
+---
+
+### **V. Cycle Continuation & Session Persistence**
+
+RushX returns to the interactive state while maintaining **session continuity** through preserved **shell state**, **command history**, **environment variables**, and **job control tables**.
+
+**Background job monitoring** continues during interactive periods, with proper **signal handling** for job state changes, **terminal I/O coordination**, and **process group management** maintaining full POSIX job control compliance.
