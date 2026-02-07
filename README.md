@@ -11,7 +11,7 @@ RushX is architected as a modular shell runtime, with clearly defined stages for
 ## RushX's Logo
 
 <div align="center">
-    <img alt="RushX's Logo" src="https://github.com/user-attachments/assets/502b94f8-c209-4fc8-af59-ff6e952603ca" width="1000"/>
+    <img alt="RushX's Logo" src="https://github.com/user-attachments/assets/4886a376-7669-49ec-965e-8b08d24b8dfd" width="1000"/>
 </div>
 
 ## Authors
