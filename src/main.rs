@@ -4,7 +4,23 @@ use std::env;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
+mod terminal;
+
 fn main() {
+    // If launched with --rushx-shell, run the interactive shell REPL.
+    // Otherwise, launch the terminal emulator window.
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a: &String| -> bool {
+        a == "--rushx-shell"
+    }) {
+        run_shell();
+    } else {
+        terminal::run();
+    }
+}
+
+fn run_shell() {
     println!("Hi from RushX !!");
 
     loop {

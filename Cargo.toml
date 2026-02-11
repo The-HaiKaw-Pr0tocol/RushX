@@ -4,3 +4,5 @@ version = "1.0.0"
 edition = "2024"
 
 [dependencies]
+winit = "0.30"
+softbuffer = "0.4"
