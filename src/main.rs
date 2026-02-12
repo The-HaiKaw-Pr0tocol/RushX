@@ -3,6 +3,8 @@ use std::io::{self, Write};
 use std::env;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::process::Command;
+use std::os::unix::process::CommandExt;
 
 mod terminal;
 
@@ -52,7 +54,10 @@ fn run_shell() {
                     type_command(args[1]);
                 }
             }
-            _ => println!("{}: command not found", args[0]),
+            _ => {
+                /*-- Not a builtin -> execute as external program --*/
+                execute_external_command(&args);
+            }
         }
     }
 }
@@ -69,15 +74,16 @@ fn type_command(cmd: &str) {
     
     match find_executable_in_path(cmd) {
         Some(path) => println!("{} is {}", cmd, path.display()),
-        None => println!("{}: not found", cmd),
+        None => eprintln!("{}: not found", cmd),
     }
 }
 
 /**
- * Searches for an executable command in the system PATH. Looping through 
- * each directory in PATH, then constructing full path by joining directory + 
- * command name. If file exists AND has execute permissions, return the path,
- * else return None
+ * Searches for an executable command in the system PATH:
+ *      Looping through each directory in PATH 
+ *      Construct full path by joining directory + command name. 
+ *      If file exists AND has execute permissions, return the path,
+ *      Else return None
  */
 fn find_executable_in_path(cmd: &str) -> Option<std::path::PathBuf> {
     if let Ok(paths) = env::var("PATH") {
@@ -96,4 +102,38 @@ fn find_executable_in_path(cmd: &str) -> Option<std::path::PathBuf> {
         }
     }
     None
+}
+
+/**
+ * Executes an external program with its arguments:
+ *      Find the executable in PATH
+ *      If found, run it with all arguments
+ *      Else print "command not found"
+ */
+fn execute_external_command(args: &[&str]) {
+    let cmd = args[0];
+    
+    match find_executable_in_path(cmd) {
+        Some(path) => {
+            let cmd_args = &args[1..];
+            
+            match Command::new(path)
+                .arg0(cmd)
+                .args(cmd_args)
+                .status() {
+                    Ok(status) => {
+                        /*-- Program executed - we don't need to do anything --*/
+                        /*-- Check if program failed --*/
+                        if let Some(code) = status.code() {
+                            /*-- Program ran but exited with error code --*/
+                            if code != 0 {
+                                eprintln!("Program exited with code: {}", code);
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("Error executing command: {}", e),
+                }
+        }
+        None => eprintln!("{}: command not found", cmd),
+    }
 }
