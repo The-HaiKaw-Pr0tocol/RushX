@@ -1,0 +1,48 @@
+.TH RUSHX 1 "February 2026" "RushX 1.0.0" "User Commands"
+.SH NAME
+rushx \- POSIX-style shell and terminal emulator (early prototype)
+.SH SYNOPSIS
+.B rushx
+[\fB--rushx-shell\fR]
+.SH DESCRIPTION
+RushX is a Rust-based terminal emulator and shell. By default it launches the
+terminal emulator window. With \fB--rushx-shell\fR it runs an interactive shell
+REPL in the terminal.
+
+The current shell implementation is minimal and supports only a small set of
+built-in commands.
+.SH OPTIONS
+.TP
+.B --rushx-shell
+Start the interactive shell REPL instead of the GUI terminal.
+.SH BUILTINS
+.TP
+.B exit
+Exit the shell.
+.TP
+.B echo \fIARGS...\fR
+Print arguments to stdout.
+.TP
+.B type \fICOMMAND\fR
+Report whether COMMAND is a shell builtin or an executable found in PATH.
+.SH FILES
+.TP
+.I ~/.rushxrc
+Planned configuration file (not yet implemented).
+.SH EXIT STATUS
+The shell returns 0 on normal exit. Unrecognized commands print an error.
+.SH EXAMPLES
+.TP
+Launch the GUI terminal:
+.B rushx
+.TP
+Run the shell REPL:
+.B rushx --rushx-shell
+.TP
+Find a command:
+.B type ls
+.SH AUTHORS
+RushX is developed by The HaiKaw Pr0tocol.
+.SH SEE ALSO
+.BR bash (1),
+.BR sh (1)
