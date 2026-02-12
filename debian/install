@@ -1,0 +1,2 @@
+debian/rushx.desktop usr/share/applications/
+assets/RushX-logo.png usr/share/icons/hicolor/512x512/apps/rushx.png

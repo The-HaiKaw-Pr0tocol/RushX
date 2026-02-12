@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=RushX
+Comment=Rust terminal emulator and shell
+Exec=rushx
+Icon=rushx
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;shell;

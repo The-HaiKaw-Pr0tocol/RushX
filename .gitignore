@@ -1,1 +1,11 @@
 /target
+/.cargo
+
+# Debian packaging build artifacts
+/debian/.debhelper/
+/debian/debhelper-build-stamp
+/debian/files
+/debian/*.substvars
+/debian/*.debhelper*
+/debian/*.log
+/debian/rushx/
