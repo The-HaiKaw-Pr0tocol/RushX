@@ -1,5 +1,8 @@
 #[allow(unused_imports)]
 use std::io::{self, Write};
+use std::env;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 
 fn main() {
     println!("Hi from RushX !!");
@@ -29,16 +32,52 @@ fn main() {
             "type" => {
                 if args.len() < 2 {
                     println!("type: missing operand");
-                } else {
-                    match args[1] {
-                        "exit" | "echo" | "type" => {
-                            println!("{} is a shell builtin", args[1]);
-                        }
-                        _ => println!("type: {}: not found", args[1]),
-                    }
+                } else { 
+                    type_command(args[1]);
                 }
             }
             _ => println!("{}: command not found", args[0]),
         }
     }
+}
+
+fn is_builtin(cmd: &str) -> bool {
+    matches!(cmd, "exit" | "echo" | "type")
+}
+
+fn type_command(cmd: &str) {
+    if is_builtin(cmd) {
+        println!("{} is a shell builtin", cmd);
+        return;
+    }
+    
+    match find_executable_in_path(cmd) {
+        Some(path) => println!("{} is {}", cmd, path.display()),
+        None => println!("{}: not found", cmd),
+    }
+}
+
+/**
+ * Searches for an executable command in the system PATH. Looping through 
+ * each directory in PATH, then constructing full path by joining directory + 
+ * command name. If file exists AND has execute permissions, return the path,
+ * else return None
+ */
+fn find_executable_in_path(cmd: &str) -> Option<std::path::PathBuf> {
+    if let Ok(paths) = env::var("PATH") {
+        for path in env::split_paths(&paths) {
+            let full_path = path.join(cmd);
+            if full_path.exists() {
+                if full_path.is_file() {
+                    if let Ok(metadata) = fs::metadata(&full_path) {
+                        let permissions = metadata.permissions();
+                        if permissions.mode() & 0o111 != 0 {
+                            return Some(full_path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
