@@ -1,0 +1,63 @@
+name: Release and publish APT
+
+on:
+    push:
+        tags:
+            - "v*"
+
+permissions:
+    contents: write
+
+jobs:
+    release:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Verify tag on main
+              run: |
+                  git fetch origin main
+                  commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+                  git merge-base --is-ancestor "$commit" origin/main
+
+            - name: Install build tools
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y debhelper dpkg-dev reprepro
+
+            - name: Build deb
+              run: |
+                  dpkg-buildpackage -b -us -uc
+                  mkdir -p dist
+                  mv ../*.deb dist/
+
+            - name: Import APT signing key
+              env:
+                  APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+              run: |
+                  echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+                  key_id="$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')"
+                  echo "default-key $key_id" >> ~/.gnupg/gpg.conf
+
+            - name: Prepare APT repo
+              run: |
+                  mkdir -p apt/repo
+                  cp -a apt/reprepro/conf apt/repo/
+                  reprepro -b apt/repo includedeb stable dist/*.deb
+                  gpg --batch --yes --armor --export > apt/repo/public.gpg
+
+            - name: Create GitHub release
+              uses: softprops/action-gh-release@v2
+              with:
+                  files: dist/*.deb
+
+            - name: Publish to GitHub Pages
+              uses: peaceiris/actions-gh-pages@v4
+              with:
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+                  publish_branch: gh-pages
+                  publish_dir: apt/repo
+                  force_orphan: true
