@@ -5,12 +5,10 @@ Maintainer: Haitam Bidiouane <h.bidiouane@gmail.com>
 Uploaders: Kawtar Taik <kawtartaik123@gmail.com>
 Build-Depends: debhelper-compat (= 13), cargo, rustc, pkg-config, libgtk-4-dev
 Standards-Version: 4.6.2
-Homepage: https://github.com/The-HaiKaw-Pr0tocol
+Homepage: https://github.com/The-HaiKaw-Pr0tocol/RushX
 Rules-Requires-Root: no
 
 Package: rushx
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: Rust terminal emulator and shell (early prototype)
- RushX is a POSIX-style terminal emulator and shell written in Rust.
- It focuses on low-level process control, PTY management, and job control.
+Description: RushX is a POSIX-compliant UNIX terminal emulator & shell written in Rust. It focuses on all low-level aspects form process control, PTY management, up to job control.
