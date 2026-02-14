@@ -26,7 +26,7 @@ jobs:
             - name: Install build tools
               run: |
                   sudo apt-get update
-                  sudo apt-get install -y devscripts
+                  sudo apt-get install -y devscripts equivs
                   mk-build-deps -ir -t "apt-get -y" debian/control
 
             - name: Build deb
