@@ -27,7 +27,7 @@ jobs:
               run: |
                   sudo apt-get update
                   sudo apt-get install -y devscripts equivs
-                  mk-build-deps -ir -t "apt-get -y" debian/control
+                  sudo mk-build-deps -ir -t "apt-get -y" debian/control
 
             - name: Build deb
               run: |
