@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 gtk4 = "0.8"
+nix = "0.26"

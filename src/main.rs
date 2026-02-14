@@ -3,6 +3,9 @@ use std::io::{self, Write};
 use std::env;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::ffi::CString;
+use nix::unistd::{fork, execvp, ForkResult};
+use nix::sys::wait::waitpid;
 
 mod terminal;
 
@@ -52,8 +55,59 @@ fn run_shell() {
                     type_command(args[1]);
                 }
             }
-            _ => println!("{}: command not found", args[0]),
+            _ => run_external(args[0], &args),
         }
+    }
+}
+
+/**
+ * Runs an external program using fork + execvp.
+ * The parent process waits for the child to finish.
+ *      -> execvp expects null terminated string so we 
+ *         convert the rust strings into CString 
+ */
+fn run_external(cmd: &str, args: &[&str]) {
+    match find_executable_in_path(cmd) {
+        Some(path) => {
+            let path_cstr = CString::new(path.to_str().unwrap()).unwrap();
+            
+            let mut c_args: Vec<CString> = Vec::with_capacity(args.len());
+            
+            /*-- argv[0] = command name - POSIX requirement --*/
+            c_args.push(CString::new(cmd).unwrap());
+            
+            for &arg in &args[1..] {
+                c_args.push(CString::new(arg).unwrap());
+            }
+                 
+            match unsafe { fork() } {
+                Ok(ForkResult::Child) => {
+                    execvp(&path_cstr, &c_args).expect("execvp failed");
+                }
+                Ok(ForkResult::Parent { child }) => {
+                    match waitpid(child, None) {
+                        Ok(status) => {
+                            use nix::sys::wait::WaitStatus;
+                            match status {
+                                WaitStatus::Exited(_, code) => {
+                                    if code != 0 {
+                                        eprintln!("Program exited with code: {}", code);
+                                    }
+                                }
+                                _ => {
+                                    /* Process was stopped, continued, or killed by signal */
+                                }
+                            }
+                        }
+                        Err(e) => eprintln!("Error waiting for child: {}", e),
+                    }
+                }
+                Err(e) => {
+                    eprintln!("fork failed: {}", e);
+                }
+            }
+        }
+        None => println!("{}: command not found", cmd),
     }
 }
 
