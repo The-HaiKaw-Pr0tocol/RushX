@@ -76,7 +76,7 @@ RushX is architected as a modular shell runtime, with clearly defined stages for
 
 ![RushX's Lifecycle](./assets/RushX_Lifecycle.png)
 
-*_Figure 1: **RushX Terminal & Shell Command Execution Lifecycle** - Architecture diagram depicting a five-phase process flow:_*
+_*Figure 1: **RushX Terminal & Shell Command Execution Lifecycle** - Architecture diagram depicting a five-phase process flow:*_
 
 </div>
 
@@ -124,3 +124,13 @@ The shell performs **exit status collection**, **resource deallocation**, and **
 RushX returns to the interactive state while maintaining **session continuity** through preserved **shell state**, **command history**, **environment variables**, and **job control tables**.
 
 **Background job monitoring** continues during interactive periods, with proper **signal handling** for job state changes, **terminal I/O coordination**, and **process group management** maintaining full POSIX job control compliance.
+
+---
+
+## Install via APT (experimental for now)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/The-HaiKaw-Pr0tocol/rushx/main/install.sh | sudo bash
+
+sudo apt-get install -y rushx
+```
