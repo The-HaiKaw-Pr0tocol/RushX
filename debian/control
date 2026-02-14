@@ -3,7 +3,7 @@ Section: utils
 Priority: optional
 Maintainer: Haitam Bidiouane <h.bidiouane@gmail.com>
 Uploaders: Kawtar Taik <kawtartaik123@gmail.com>
-Build-Depends: debhelper-compat (= 13), cargo, rustc, pkg-config, libgtk-4-dev
+Build-Depends: debhelper-compat (= 13), cargo, rustc, pkg-config, libgtk-4-dev, dpkg-dev, devscripts, equivs, reprepro
 Standards-Version: 4.6.2
 Homepage: https://github.com/The-HaiKaw-Pr0tocol/RushX
 Rules-Requires-Root: no
