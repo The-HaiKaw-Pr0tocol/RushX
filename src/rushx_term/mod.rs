@@ -23,7 +23,6 @@ fn build_ui(app: &Application) {
     window.present();
 }
 
-/*-- Launch the RushX terminal window --*/
 pub fn run() {
     let app = Application::builder()
         .application_id("org.rushx.terminal")
