@@ -1,3 +1,25 @@
+//! ## `rushx_exec` <ins>module</ins>: Execution Engine
+//!
+//! Command execution engine. Handles fork/exec for external commands, builtin
+//! detection and dispatch, PATH resolution with permission checking. Manages
+//! process lifecycle from spawn to waitpid, with proper exit status reporting.
+//!
+//! Syscall functions like `execvp(const char *file, char * const argv[])` require C strings.
+//! Direct Rust strings would cause undefined behavior (reading past memory). We convert
+//! at FFI boundaries using `CString::new()` to ensure null termination (**CString**: Rust's owned, null-terminated C string wrapper)
+//!
+//!
+//! ## Metadata
+//!
+//! - **File**: src/rushx_exec/mod.rs
+//! - **Module**: rushx_exec
+//! - **Last Update**: 02/17/2026
+//! - **Last Updated By**: sch0penheimer
+//! - **Version**: 0.1.0
+//! - **Copyright**: © 2026 The HaiKaw Pr0tocol
+
+/*=============================================================================*/
+
 use std::env;
 use std::ffi::CString;
 use std::fs;
@@ -6,13 +28,32 @@ use std::os::unix::fs::PermissionsExt;
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::{ForkResult, execvp, fork};
 
+/// Executes an external command via fork/exec.
+///
+/// ### Arguments
+/// - `cmd`: Command name (resolved via PATH)
+/// - `args`: Argument vector (includes `cmd` at argv[0] - POSIX requirement)
+///
+/// ### Behavior
+/// - Searches PATH for executable
+/// - Forks child process
+/// - Child: overlays with `execvp`
+/// - Parent: waits for child termination via `waitpid`
+///
+/// ### Output
+/// - Prints error to stderr on non-zero exit or command not found
+///
+/// ### Some FFI Notes
+/// The `execvp` C syscall function expects null-terminated strings. We convert Rust strings
+/// to `CString` (owned, null-terminated) to satisfy this.
+///
 pub fn run_external(cmd: &str, args: &[&str]) {
     match find_executable_in_path(cmd) {
         Some(path) => {
             let path_cstr = CString::new(path.to_str().unwrap()).unwrap();
             let mut c_args: Vec<CString> = Vec::with_capacity(args.len());
 
-            // argv[0] must be the command name (POSIX requirement).
+            //** argv[0] must be the command name (POSIX requirement) **//
             c_args.push(CString::new(cmd).unwrap());
 
             for &arg in &args[1..] {
@@ -42,10 +83,27 @@ pub fn run_external(cmd: &str, args: &[&str]) {
     }
 }
 
+/// Checks if a command is a shell builtin.
+///
+/// ### Arguments
+/// - `cmd`: Command name
+///
+/// ### Returns
+/// `true` if `cmd` is `exit`, `echo`, or `type`
+/// 
 pub fn is_builtin(cmd: &str) -> bool {
     matches!(cmd, "exit" | "echo" | "type")
 }
 
+/// Implements the `type` builtin command.
+///
+/// ### Arguments
+/// - `cmd`: Command name to inspect
+///
+/// ### Output
+/// - Prints whether `cmd` is a builtin or external (with full path)
+/// - Prints "not found" if neither
+/// 
 pub fn type_command(cmd: &str) {
     if is_builtin(cmd) {
         println!("{} is a shell builtin", cmd);
@@ -58,6 +116,20 @@ pub fn type_command(cmd: &str) {
     }
 }
 
+/// Searches PATH for an executable command.
+///
+/// ### Arguments
+/// - `cmd`: Command name (no path separators)
+///
+/// ### Returns
+/// - `Some(PathBuf)` if found and executable (mode & 0111 != 0)
+/// - `None` otherwise
+///
+/// ### Algorithm
+/// - Iterates PATH directories
+/// - Joins `cmd` to each path
+/// - Checks: file exists + is regular file + has execute permission
+///
 pub fn find_executable_in_path(cmd: &str) -> Option<std::path::PathBuf> {
     if let Ok(paths) = env::var("PATH") {
         for path in env::split_paths(&paths) {
