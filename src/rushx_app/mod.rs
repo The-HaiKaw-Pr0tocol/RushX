@@ -1,8 +1,30 @@
-use std::io::{self, Write};
+//! ## `rushx_app` <ins>module</ins>: RushX Application Dispatcher
+//!
+//! Application entry point and CLI dispatcher. Contains the main REPL
+//! loop, dispatching to builtins and external commands via
+//! the execution engine.
+//!
+//! ### Metadata
+//!
+//! - **File**: src/rushx_app/mod.rs
+//! - **Module**: rushx_app
+//! - **Last Update**: 02/17/2026
+//! - **Last Updated By**: sch0penheimer
+//! - **Version**: 0.1.0
+//! - **Copyright**: © 2026 The HaiKaw Pr0tocol
+
+/*=============================================================================*/
 
 use crate::rushx_exec;
 use crate::rushx_term;
+use std::io::{self, Write};
 
+/// Dispatches to shell REPL or terminal GUI based on CLI arguments.
+///
+/// ### Behavior
+/// - If `--rushx-shell` flag is present → launches interactive shell REPL
+/// - Otherwise → launches GTK terminal emulator window
+/// 
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -13,9 +35,18 @@ pub fn run() {
     }
 }
 
+/// Main Interactive shell REPL loop.
+///
+/// ### Behavior
+/// - Prints prompt (`$ `)
+/// - Reads line from stdin
+/// - Parses whitespace-delimited arguments
+/// - Dispatches builtins (`exit`, `echo`, `type`) or external commands
+///
+/// # Exit
+/// Terminates on `exit` builtin or EOF.
+/// 
 fn run_shell() {
-    println!("Hi from RushX !!");
-
     loop {
         print!("$ ");
         io::stdout().flush().unwrap();
