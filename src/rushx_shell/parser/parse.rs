@@ -1,4 +1,5 @@
-// # Recursive Descent Parser
+//
+// ## Recursive Descent Parser
 //
 // Recursive descent parser for shell command syntax. Consumes token
 // stream from lexer and constructs AST nodes. Handles operator
@@ -6,11 +7,12 @@
 //
 // ## Metadata
 //
-// - **File**: src/rushx_parser/parse.rs
-// - **Module**: rushx_parser::parse
+// - **File**: src/rushx_shell/parser/parse.rs
+// - **Module**: rushx_shell::parser::parse
 // - **Last Update**: 02/17/2026
 // - **Last Updated By**: sch0penheimer
 // - **Version**: 0.1.0
 // - **Copyright**: © 2026 The HaiKaw Pr0tocol
+//
 
 /*=============================================================================*/

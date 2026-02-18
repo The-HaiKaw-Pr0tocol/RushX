@@ -1,3 +1,4 @@
+//!
 //! ## `rushx_term` <ins>module</ins>: Terminal Emulator (GTK4)
 //!
 //! GTK4-based terminal emulator GUI. Manages application window lifecycle,
@@ -11,7 +12,8 @@
 //! - **Last Update**: 02/17/2026
 //! - **Last Updated By**: sch0penheimer
 //! - **Version**: 0.1.0
-//! - **Copyright**: © 2026 The HaiKaw Pr0tocol
+//!  - **Copyright**: © 2026 The HaiKaw Pr0tocol
+//!
 
 /*=============================================================================*/
 
@@ -21,6 +23,11 @@ use gtk4 as gtk;
 
 const BG_COLOR: (f64, f64, f64) = (0.117, 0.117, 0.180);
 
+///
+/// #### **<ins>Function</ins>** 
+/// ```Rust
+///     build_ui(app: &Application) -> ()
+/// ```
 /// Constructs the GTK terminal window UI.
 ///
 /// ### Arguments
@@ -31,7 +38,7 @@ const BG_COLOR: (f64, f64, f64) = (0.117, 0.117, 0.180);
 /// - Attaches a DrawingArea with solid background color
 /// - Presents the window on screen
 /// 
-fn build_ui(app: &Application) {
+fn build_ui(app: &Application) -> () {
     let window = ApplicationWindow::builder()
         .application(app)
         .title("RushX Terminal")
@@ -50,13 +57,18 @@ fn build_ui(app: &Application) {
     window.present();
 }
 
+///
+/// #### **<ins>Function</ins>** 
+/// ```Rust
+///     run_rushx_terminal() -> ()
+/// ```
 /// Launches the RushX terminal emulator window.
 ///
 /// ### Behavior
 /// - Initializes GTK application with ID `org.rushx.terminal`
 /// - Wires `build_ui` to activation signal
 /// - Enters GTK main event loop (blocks until window closes)
-pub fn run() {
+pub fn run_rushx_terminal() -> () {
     let app = Application::builder()
         .application_id("org.rushx.terminal")
         .build();
