@@ -1,3 +1,4 @@
+//!
 //! ## `rushx_shell` <ins>module</ins>: Shell REPL & Dispatch
 //!
 //! Interactive shell loop and builtin/external dispatch.
@@ -10,6 +11,7 @@
 //! - **Last Updated By**: sch0penheimer
 //! - **Version**: 0.1.0
 //! - **Copyright**: © 2026 The HaiKaw Pr0tocol
+//!
 
 /*=============================================================================*/
 
@@ -20,6 +22,11 @@ pub mod parser;
 
 use std::io::{self, Write};
 
+///
+/// #### **<ins>Function</ins>** 
+/// ```Rust
+///     run_rushx_shell() -> ()
+/// ```
 /// Main interactive shell REPL loop.
 ///
 /// ### Behavior
@@ -31,7 +38,7 @@ use std::io::{self, Write};
 /// ### Exit
 /// Terminates on `exit` builtin or EOF.
 ///
-pub fn run() {
+pub fn run_rushx_shell() -> () {
     loop {
         print!("$ ");
         io::stdout().flush().unwrap();

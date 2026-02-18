@@ -1,4 +1,5 @@
-// # Lexical Analysis & Tokenization
+//
+// ## Lexical Analysis & Tokenization
 //
 // Lexical analysis and tokenization. Converts raw input strings into
 // a token stream, handling quotes, escapes, operators, whitespace,
@@ -12,5 +13,6 @@
 // - **Last Updated By**: sch0penheimer
 // - **Version**: 0.1.0
 // - **Copyright**: © 2026 The HaiKaw Pr0tocol
+//
 
 /*=============================================================================*/

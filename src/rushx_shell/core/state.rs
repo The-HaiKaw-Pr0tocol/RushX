@@ -1,4 +1,5 @@
-// # Shell State Management
+//
+// ## Shell State Management
 //
 // Shell runtime state management. Tracks environment variables,
 // job table, foreground process group, shell options, and command
@@ -12,5 +13,6 @@
 // - **Last Updated By**: sch0penheimer
 // - **Version**: 0.1.0
 // - **Copyright**: © 2026 The HaiKaw Pr0tocol
+//
 
 /*=============================================================================*/

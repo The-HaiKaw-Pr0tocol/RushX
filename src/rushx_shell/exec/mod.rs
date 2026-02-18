@@ -1,3 +1,4 @@
+//!
 //! ## `rushx_shell::exec` <ins>module</ins>: Execution Engine
 //!
 //! Command execution engine. Handles fork/exec for external commands, builtin
@@ -17,6 +18,7 @@
 //! - **Last Updated By**: sch0penheimer
 //! - **Version**: 0.1.0
 //! - **Copyright**: © 2026 The HaiKaw Pr0tocol
+//!
 
 /*=============================================================================*/
 
@@ -28,11 +30,16 @@ use std::os::unix::fs::PermissionsExt;
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::{ForkResult, execvp, fork};
 
+///
+/// #### **<ins>Function</ins>** 
+/// ```Rust
+///     run_external(cmd: &str, args: &[&str]) -> ()
+/// ```
 /// Executes an external command via fork/exec.
 ///
 /// ### Arguments
 /// - `cmd`: Command name (resolved via PATH)
-/// - `args`: Argument vector (includes `cmd` at argv[0] - POSIX requirement)
+/// - `args`: Argument vector
 ///
 /// ### Behavior
 /// - Searches PATH for executable
@@ -47,7 +54,7 @@ use nix::unistd::{ForkResult, execvp, fork};
 /// The `execvp` C syscall function expects null-terminated strings. We convert Rust strings
 /// to `CString` (owned, null-terminated) to satisfy this.
 ///
-pub fn run_external(cmd: &str, args: &[&str]) {
+pub fn run_external(cmd: &str, args: &[&str]) -> () {
     match find_executable_in_path(cmd) {
         Some(path) => {
             let path_cstr = CString::new(path.to_str().unwrap()).unwrap();
@@ -83,6 +90,11 @@ pub fn run_external(cmd: &str, args: &[&str]) {
     }
 }
 
+///
+/// #### **<ins>Function</ins>** 
+/// ```Rust
+///     is_builtin(cmd: &str) -> bool
+/// ```
 /// Checks if a command is a shell builtin.
 ///
 /// ### Arguments
@@ -95,6 +107,11 @@ pub fn is_builtin(cmd: &str) -> bool {
     matches!(cmd, "exit" | "echo" | "type")
 }
 
+///
+/// #### **<ins>Function</ins>** 
+/// ```Rust
+///     type_command(cmd: &str) -> ()
+/// ```
 /// Implements the `type` builtin command.
 ///
 /// ### Arguments
@@ -104,7 +121,7 @@ pub fn is_builtin(cmd: &str) -> bool {
 /// - Prints whether `cmd` is a builtin or external (with full path)
 /// - Prints "not found" if neither
 ///
-pub fn type_command(cmd: &str) {
+pub fn type_command(cmd: &str) -> () {
     if is_builtin(cmd) {
         println!("{} is a shell builtin", cmd);
         return;
@@ -116,6 +133,11 @@ pub fn type_command(cmd: &str) {
     }
 }
 
+///
+/// #### **<ins>Function</ins>** 
+/// ```Rust
+///     find_executable_in_path(cmd: &str) -> Option<std::path::PathBuf>
+/// ```
 /// Searches PATH for an executable command.
 ///
 /// ### Arguments

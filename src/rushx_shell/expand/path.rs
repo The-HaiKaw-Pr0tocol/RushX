@@ -1,4 +1,5 @@
-// # PATH Resolution & Command Lookup
+//
+// ## PATH Resolution & Command Lookup
 //
 // PATH environment variable resolution and command lookup. Searches
 // directories in PATH for executable files, validates permissions,
@@ -12,5 +13,6 @@
 // - **Last Updated By**: sch0penheimer
 // - **Version**: 0.1.0
 // - **Copyright**: © 2026 The HaiKaw Pr0tocol
+//
 
 /*=============================================================================*/

@@ -1,4 +1,5 @@
-// # Filename Globbing & Pattern Matching
+//
+// ## Filename Globbing & Pattern Matching
 //
 // Filename globbing and pattern matching. Expands wildcards (*, ?, [...]),
 // brace expansions, and character classes. Matches patterns against
@@ -12,5 +13,6 @@
 // - **Last Updated By**: sch0penheimer
 // - **Version**: 0.1.0
 // - **Copyright**: © 2026 The HaiKaw Pr0tocol
+//
 
 /*=============================================================================*/
