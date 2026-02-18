@@ -13,13 +13,10 @@
 
 /*=============================================================================*/
 
-mod rushx_app;
-mod rushx_core;
-mod rushx_exec;
-mod rushx_expand;
-mod rushx_parser;
+mod rushx_launcher;
+mod rushx_shell;
 mod rushx_term;
 
 fn main() {
-    rushx_app::run();
+    rushx_launcher::run();
 }

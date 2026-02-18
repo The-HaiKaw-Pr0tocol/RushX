@@ -6,8 +6,8 @@
 //
 // ## Metadata
 //
-// - **File**: src/rushx_expand/path.rs
-// - **Module**: rushx_expand::path
+// - **File**: src/rushx_shell/expand/path.rs
+// - **Module**: rushx_shell::expand::path
 // - **Last Update**: 02/17/2026
 // - **Last Updated By**: sch0penheimer
 // - **Version**: 0.1.0

@@ -6,8 +6,8 @@
 //
 // ## Metadata
 //
-// - **File**: src/rushx_parser/lexer.rs
-// - **Module**: rushx_parser::lexer
+// - **File**: src/rushx_shell/parser/lexer.rs
+// - **Module**: rushx_shell::parser::lexer
 // - **Last Update**: 02/17/2026
 // - **Last Updated By**: sch0penheimer
 // - **Version**: 0.1.0

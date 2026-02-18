@@ -1,4 +1,4 @@
-//! ## `rushx_exec` <ins>module</ins>: Execution Engine
+//! ## `rushx_shell::exec` <ins>module</ins>: Execution Engine
 //!
 //! Command execution engine. Handles fork/exec for external commands, builtin
 //! detection and dispatch, PATH resolution with permission checking. Manages
@@ -11,8 +11,8 @@
 //!
 //! ## Metadata
 //!
-//! - **File**: src/rushx_exec/mod.rs
-//! - **Module**: rushx_exec
+//! - **File**: src/rushx_shell/exec/mod.rs
+//! - **Module**: rushx_shell::exec
 //! - **Last Update**: 02/17/2026
 //! - **Last Updated By**: sch0penheimer
 //! - **Version**: 0.1.0
@@ -90,7 +90,7 @@ pub fn run_external(cmd: &str, args: &[&str]) {
 ///
 /// ### Returns
 /// `true` if `cmd` is `exit`, `echo`, or `type`
-/// 
+///
 pub fn is_builtin(cmd: &str) -> bool {
     matches!(cmd, "exit" | "echo" | "type")
 }
@@ -103,7 +103,7 @@ pub fn is_builtin(cmd: &str) -> bool {
 /// ### Output
 /// - Prints whether `cmd` is a builtin or external (with full path)
 /// - Prints "not found" if neither
-/// 
+///
 pub fn type_command(cmd: &str) {
     if is_builtin(cmd) {
         println!("{} is a shell builtin", cmd);

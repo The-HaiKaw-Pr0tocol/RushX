@@ -1,4 +1,4 @@
-//! ## `rushx_core` <ins>module</ins>: Core Types & Shared Data Structures
+//! ## `rushx_shell::core` <ins>module</ins>: Core Types & Shared Data Structures
 //!
 //! Shared types and core data structures. Contains AST definitions for parsed
 //! commands, error types for the execution engine, and shell state management
@@ -6,8 +6,8 @@
 //!
 //! ## Metadata
 //!
-//! - **File**: src/rushx_core/mod.rs
-//! - **Module**: rushx_core
+//! - **File**: src/rushx_shell/core/mod.rs
+//! - **Module**: rushx_shell::core
 //! - **Last Update**: 02/17/2026
 //! - **Last Updated By**: sch0penheimer
 //! - **Version**: 0.1.0
