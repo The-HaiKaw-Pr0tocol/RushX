@@ -14,13 +14,21 @@
 
 /*=============================================================================*/
 
+use crate::rushx_shell;
 use crate::rushx_term;
 
 /// Launches the terminal emulator.
 ///
 /// ### Behavior
-/// - Starts the GTK terminal emulator window
+/// - If `--rushx-shell` flag is present → launches interactive shell REPL
+/// - Otherwise → starts the GTK terminal emulator window
 ///
 pub fn run() {
-    rushx_term::run();
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|arg| arg == "--rushx-shell") {
+        rushx_shell::run();
+    } else {
+        rushx_term::run();
+    }
 }
