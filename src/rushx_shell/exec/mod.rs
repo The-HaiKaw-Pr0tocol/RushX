@@ -101,10 +101,10 @@ pub fn run_external(cmd: &str, args: &[&str]) -> () {
 /// - `cmd`: Command name
 ///
 /// ### Returns
-/// `true` if `cmd` is `exit`, `echo`, or `type`
+/// `true` if `cmd` is `exit`, `echo`, `type`, `pwd` or `cd`
 ///
 pub fn is_builtin(cmd: &str) -> bool {
-    matches!(cmd, "exit" | "echo" | "type")
+    matches!(cmd, "exit" | "echo" | "type" | "pwd" | "cd")
 }
 
 ///
