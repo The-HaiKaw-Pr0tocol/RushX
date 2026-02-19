@@ -1,8 +1,8 @@
-//! ## RushX - Main Entry Point
+//! ### RushX - Main Crate
 //!
-//! Binary entry point for RushX.
+//! Entry point for RushX.
 //!
-//! ## Metadata
+//! ### Metadata
 //!
 //! - **File**: src/main.rs
 //! - **Module**: main
