@@ -23,11 +23,11 @@
 ///
 /// #### **<ins>Constant</ins>**
 /// ```Rust
-///     APP_ID: &str = "org.rushx.terminal"
+///     APP_ID: &str = "haikaw.rushx.terminal"
 /// ```
 /// GTK Application ID for D-Bus registration.
 ///
-pub const APP_ID: &str = "org.rushx.terminal";
+pub const APP_ID: &str = "haikaw.rushx.terminal";
 
 ///
 /// #### **<ins>Constant</ins>**
@@ -40,7 +40,7 @@ pub const WINDOW_TITLE: &str = "RushX";
 
 /* ── Window Geometry ──────────────────────────────────────────────────────── */
 
-///
+///º
 /// #### **<ins>Constant</ins>**
 /// ```Rust
 ///     WINDOW_WIDTH: i32 = 800
@@ -65,10 +65,10 @@ pub const WINDOW_HEIGHT: i32 = 500;
 /// ```Rust
 ///     BG_COLOR: (f64, f64, f64) = (0.117, 0.117, 0.180)
 /// ```
-/// Background color as (R, G, B) in 0.0–1.0 range.
+/// Background color in (R, G, B)
 ///
 /// ### Palette
-/// Dark blue-gray `#1e1e2e` — Catppuccin Mocha Base.
+/// Dark blue-gray `#1e1e2e`
 ///
 pub const BG_COLOR: (f64, f64, f64) = (0.117, 0.117, 0.180);
 
@@ -77,10 +77,10 @@ pub const BG_COLOR: (f64, f64, f64) = (0.117, 0.117, 0.180);
 /// ```Rust
 ///     FG_COLOR: (f64, f64, f64) = (0.804, 0.839, 0.957)
 /// ```
-/// Foreground (text) color as (R, G, B) in 0.0–1.0 range.
+/// Foreground (text) color in (R, G, B)
 ///
 /// ### Palette
-/// Light gray `#cdd6f4` — Catppuccin Mocha Text.
+/// Light gray `#cdd6f4`
 ///
 pub const FG_COLOR: (f64, f64, f64) = (0.804, 0.839, 0.957);
 
@@ -133,7 +133,7 @@ pub const TEXT_PADDING: f64 = 4.0;
 ///
 /// ### Behavior
 /// The terminal emulator re-invokes itself with `SHELL_FLAG` to launch
-/// the shell inside the PTY child. `/proc/self/exe` resolves to the
+/// the RushX shell inside the PTY child. `/proc/self/exe` resolves to the
 /// current binary on Linux.
 ///
 pub const SHELL_PATH: &str = "/proc/self/exe";

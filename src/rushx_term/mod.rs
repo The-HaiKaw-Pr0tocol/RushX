@@ -42,13 +42,9 @@ use nix::unistd;
 /// Launches the RushX terminal emulator with an attached shell.
 ///
 /// ### Behavior
-/// 1. Allocates a PTY master/slave pair via `openpty(2)`
-/// 2. Forks the shell child process (`rushx --rushx-shell`) **before**
-///    GTK initialization to avoid async-signal-safety issues with `fork(2)`
-///    in a multi-threaded GTK runtime
-/// 3. Extracts the raw master fd (consumed from `OwnedFd`, the fd lives
-///    until process exit, which is standard for terminal emulators)
-/// 4. Initializes the GTK application and enters the main event loop
+/// 1. Allocates a PTY master/slave pair via `pty::open_pty_pair()`
+/// 2. Spawns the shell child process attached to the slave fd via `pty::spawn_shell()`
+/// 3. Initializes the GTK application and enters the main event loop
 ///
 /// ### Panics
 /// - If PTY pair allocation fails
@@ -84,17 +80,12 @@ pub fn run_rushx_terminal() -> () {
 /// - `master_fd`: Raw PTY master file descriptor for bidirectional shell I/O
 ///
 /// ### Behavior
-/// 1. Creates the application window with configured dimensions and title
-/// 2. Allocates a shared text buffer (`Rc<RefCell<String>>`) for shell output
-/// 3. Spawns a **reader thread** that loops on `read(master_fd)` and forwards
-///    output bytes to the GTK main loop via an `mpsc` channel
-/// 4. Creates a `DrawingArea` that renders the text buffer on each frame
-///    (Cairo toy text API, monospace, auto-scrolled to bottom)
-/// 5. Installs a 16 ms (`~60 fps`) poll timer that drains the channel,
-///    appends to the text buffer, and triggers redraws
-/// 6. Attaches an `EventControllerKey` that translates keystrokes into
-///    bytes and writes them to the PTY master fd
-/// 7. Presents the window
+/// 1. Allocates shared state for the terminal text buffer and cursor visibility
+/// 2. Spawns a thread to read from `master_fd` and send output to the main thread via an mpsc channel
+/// 3. Sets up a `DrawingArea` with a custom draw function to render the terminal text and cursor
+/// 4. Sets up a keyboard event controller to capture key presses and write them to `master_fd` as input to the shell
+/// 5. Starts timers for redrawing on new output and blinking the cursor
+/// 6. Presents the window and enters the GTK main loop
 ///
 fn build_ui(app: &Application, master_fd: RawFd) -> () {
     let text_buffer: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));

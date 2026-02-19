@@ -9,8 +9,8 @@
 //!
 //! The parent retains the master fd for bidirectional I/O with the
 //! child shell process: bytes written to the master appear on the shell's
-//! stdin, and bytes the shell writes to stdout/stderr are readable from
-//! the master.
+//! stdin (via Slave), and bytes the shell writes to stdout/stderr are readable from
+//! the master (via Slave).
 //!
 //! ## Metadata
 //!
@@ -27,7 +27,7 @@
 use std::ffi::CString;
 use std::os::fd::RawFd;
 
-use nix::pty::openpty;
+use nix::pty::{OpenptyResult, openpty};
 use nix::unistd::{ForkResult, Pid, close, dup2, execvp, fork, setsid};
 
 use super::config;
@@ -40,8 +40,8 @@ use super::config;
 /// Holds the file descriptors from an `openpty(2)` allocation.
 ///
 /// ### Fields
-/// - `master`: PTY master fd — retained by the parent (terminal emulator) for I/O
-/// - `slave`: PTY slave fd — becomes the child's (shell) stdin/stdout/stderr
+/// - `master`: PTY master fd, retained by the parent (terminal emulator) for I/O
+/// - `slave`: PTY slave fd, becomes the child's (shell) stdin/stdout/stderr
 ///
 pub struct PtyPair {
     pub master: RawFd,
@@ -58,7 +58,7 @@ pub struct PtyPair {
 /// for lifecycle management (signals, `waitpid`).
 ///
 /// ### Fields
-/// - `master_fd`: PTY master fd for bidirectional shell I/O
+/// - `master_fd`: PTY master fd for the Parent's (terminal) bidirectional shell I/O
 /// - `child_pid`: PID of the forked shell child process
 ///
 pub struct SpawnedShell {
@@ -71,23 +71,25 @@ pub struct SpawnedShell {
 /// ```Rust
 ///     open_pty_pair() -> Result<PtyPair, nix::Error>
 /// ```
-/// Allocates a new pseudoterminal master/slave pair via `openpty(2)`.
+/// Allocates a new pseudoterminal master/slave pair via the `openpty()` syscall.
 ///
 /// ### Returns
 /// - `Ok(PtyPair)` with owned master and slave file descriptors
-/// - `Err(nix::Error)` if `openpty(2)` fails (e.g., out of PTY devices)
+/// - `Err(nix::Error)` if `openpty()` fails (e.g., out of PTY devices)
 ///
 /// ### Syscalls
-/// - `openpty(2)`: Allocates and configures a PTY pair. Internally
+/// - `openpty()`: Allocates and configures a PTY pair. Internally
 ///   performs `posix_openpt` + `grantpt` + `unlockpt` + `ptsname`.
 ///
 pub fn open_pty_pair() -> Result<PtyPair, nix::Error> {
-    let result = openpty(None, None)?;
+    let result: OpenptyResult = openpty(None, None)?;
 
-    Ok(PtyPair {
-        master: result.master,
-        slave: result.slave,
-    })
+    Ok(
+        PtyPair {
+            master: result.master,
+            slave: result.slave
+        }
+    )
 }
 
 ///
@@ -102,8 +104,9 @@ pub fn open_pty_pair() -> Result<PtyPair, nix::Error> {
 ///
 /// ### Child Process Setup (POSIX Session & Controlling Terminal)
 /// 1. Closes the master fd (only the parent needs it)
-/// 2. Calls `setsid(2)` → creates a new session, child becomes session leader
-/// 3. Sets slave as controlling terminal via `ioctl(TIOCSCTTY)`
+/// 2. Calls `setsid(2)` → creates a new session to detach from the parents's session. Child 
+///    becomes session leader
+/// 3. Sets slave as the session's controlling terminal via `ioctl(TIOCSCTTY)`
 /// 4. Duplicates slave fd onto fds 0, 1, 2 (stdin/stdout/stderr) via `dup2(2)`
 /// 5. Closes the original slave fd (now duplicated, no longer needed)
 /// 6. Calls `execvp(3)` to overlay with `rushx --rushx-shell`
@@ -129,6 +132,7 @@ pub fn spawn_shell(pty: PtyPair) -> Result<SpawnedShell, nix::Error> {
     let master_fd = pty.master;
     let slave_fd = pty.slave;
 
+    /* CString preparation for the raw execvp() syscall */
     let shell_path_cstr = CString::new(config::SHELL_PATH).expect("invalid SHELL_PATH");
     let shell_name_cstr = CString::new("rushx").expect("invalid argv[0]");
     let shell_flag_cstr = CString::new(config::SHELL_FLAG).expect("invalid SHELL_FLAG");
@@ -138,7 +142,6 @@ pub fn spawn_shell(pty: PtyPair) -> Result<SpawnedShell, nix::Error> {
             let _ = close(master_fd);
 
             setsid().expect("setsid(2) failed");
-            //-- Arg 0 = "don't steal from another session". --//
             unsafe {
                 if libc::ioctl(slave_fd, libc::TIOCSCTTY, 0) < 0 {
                     libc::_exit(1);
@@ -162,10 +165,12 @@ pub fn spawn_shell(pty: PtyPair) -> Result<SpawnedShell, nix::Error> {
         Ok(ForkResult::Parent { child }) => {
             let _ = close(slave_fd);
 
-            Ok(SpawnedShell {
-                master_fd,
-                child_pid: child,
-            })
+            Ok(
+                SpawnedShell {
+                    master_fd,
+                    child_pid: child,
+                }
+            )
         }
 
         Err(e) => Err(e),

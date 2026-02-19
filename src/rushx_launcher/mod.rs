@@ -1,8 +1,7 @@
 //!
 //!  ## `rushx_launcher` <ins>module</ins>: RushX Launcher
 //!
-//! Application entry point and launcher. The terminal emulator owns
-//! shell spawning via PTY, keeping shell logic separate.
+//! Application entry point and launcher.
 //!
 //! ### Metadata
 //!
