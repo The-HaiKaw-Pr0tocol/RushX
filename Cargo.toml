@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 gtk4 = "0.8"
+libc = "0.2"
 nix = "0.26"

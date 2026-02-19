@@ -528,6 +528,7 @@ name = "rushx"
 version = "1.0.0"
 dependencies = [
  "gtk4",
+ "libc",
  "nix",
 ]
 
