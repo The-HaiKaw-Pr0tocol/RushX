@@ -50,13 +50,13 @@ pub fn run_rushx_shell() -> () {
             break;
         }
 
-        let args: Vec<&str> = input_buffer.split_whitespace().collect();
+        let args = parser::parse_args(input_buffer.trim());
 
         if args.is_empty() {
             continue;
         }
 
-        match args[0] {
+        match args[0].as_str() {
             "exit" => break,
             "echo" => {
                 if args.len() > 1 {
@@ -69,7 +69,7 @@ pub fn run_rushx_shell() -> () {
                 if args.len() < 2 {
                     println!("type: missing operand");
                 } else {
-                    exec::type_command(args[1]);
+                    exec::type_command(&args[1]);
                 }
             }
             "pwd" => {
@@ -112,7 +112,10 @@ pub fn run_rushx_shell() -> () {
                     eprintln!("cd: {}: No such file or directory", resolved);
                 }
             }
-            _ => exec::run_external(args[0], &args),
+            _ => {
+                let str_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                exec::run_external(&args[0], &str_args);
+            }
         }
     }
 }

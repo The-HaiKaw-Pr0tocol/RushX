@@ -19,3 +19,5 @@
 
 pub mod lexer;
 pub mod parse;
+
+pub use parse::parse_args;
