@@ -35,6 +35,12 @@ jobs:
                   mkdir -p dist
                   mv ../*.deb dist/
 
+            - name: Rename .deb with tag
+              run: |
+                  tag="${GITHUB_REF_NAME:-${GITHUB_REF##*/}}"
+                  debfile=$(ls dist/*.deb) 
+                  mv "$debfile" "dist/rushx-${tag}.deb"
+
             - name: Import APT signing key
               env:
                   APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
