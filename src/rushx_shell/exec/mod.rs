@@ -27,8 +27,10 @@ use std::ffi::CString;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
+use nix::fcntl::{OFlag, open};
+use nix::sys::stat::Mode;
 use nix::sys::wait::{WaitStatus, waitpid};
-use nix::unistd::{ForkResult, execvp, fork};
+use nix::unistd::{ForkResult, close, dup2, execvp, fork};
 
 ///
 /// #### **<ins>Function</ins>** 
@@ -54,7 +56,7 @@ use nix::unistd::{ForkResult, execvp, fork};
 /// The `execvp` C syscall function expects null-terminated strings. We convert Rust strings
 /// to `CString` (owned, null-terminated) to satisfy this.
 ///
-pub fn run_external(cmd: &str, args: &[&str]) -> () {
+pub fn run_external(cmd: &str, args: &[&str], stdout_file: Option<&str>, stderr_file: Option<&str>, stdout_append: bool, stderr_append: bool) -> () {
     match find_executable_in_path(cmd) {
         Some(path) => {
             let path_cstr = CString::new(path.to_str().unwrap()).unwrap();
@@ -69,12 +71,47 @@ pub fn run_external(cmd: &str, args: &[&str]) -> () {
 
             match unsafe { fork() } {
                 Ok(ForkResult::Child) => {
+                    /*-- If stdout redirection is requested, open target file --*/ 
+                    /*-- and dup2 it onto fd 1 (stdout). --*/
+                    if let Some(file_path) = stdout_file {
+                        let flags = if stdout_append {
+                            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND
+                        } else {
+                            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC
+                        };
+                        let fd = open(
+                            file_path,
+                            flags,
+                            Mode::from_bits_truncate(0o644),
+                        )
+                        .expect("failed to open redirect target");
+                        dup2(fd, 1).expect("dup2 failed");
+                        close(fd).ok();
+                    }
+
+                    /*-- If stderr redirection is requested, open target file --*/
+                    /*-- and dup2 it onto fd 2 (stderr). --*/
+                    if let Some(file_path) = stderr_file {
+                        let flags = if stderr_append {
+                            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND
+                        } else {
+                            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC
+                        };
+                        let fd = open(
+                            file_path,
+                            flags,
+                            Mode::from_bits_truncate(0o644),
+                        )
+                        .expect("failed to open stderr redirect target");
+                        dup2(fd, 2).expect("dup2 stderr failed");
+                        close(fd).ok();
+                    }
                     execvp(&path_cstr, &c_args).expect("execvp failed");
                 }
                 Ok(ForkResult::Parent { child }) => match waitpid(child, None) {
                     Ok(status) => {
                         if let WaitStatus::Exited(_, code) = status {
-                            if code != 0 {
+                            if code != 0 && stderr_file.is_none() {
                                 eprintln!("Program exited with code: {}", code);
                             }
                         }
@@ -105,32 +142,6 @@ pub fn run_external(cmd: &str, args: &[&str]) -> () {
 ///
 pub fn is_builtin(cmd: &str) -> bool {
     matches!(cmd, "exit" | "echo" | "type" | "pwd" | "cd")
-}
-
-///
-/// #### **<ins>Function</ins>** 
-/// ```Rust
-///     type_command(cmd: &str) -> ()
-/// ```
-/// Implements the `type` builtin command.
-///
-/// ### Arguments
-/// - `cmd`: Command name to inspect
-///
-/// ### Output
-/// - Prints whether `cmd` is a builtin or external (with full path)
-/// - Prints "not found" if neither
-///
-pub fn type_command(cmd: &str) -> () {
-    if is_builtin(cmd) {
-        println!("{} is a shell builtin", cmd);
-        return;
-    }
-
-    match find_executable_in_path(cmd) {
-        Some(path) => println!("{} is {}", cmd, path.display()),
-        None => println!("{}: not found", cmd),
-    }
 }
 
 ///
