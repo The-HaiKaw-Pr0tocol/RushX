@@ -116,18 +116,20 @@ pub fn parse_args(input: &str) -> Vec<String> {
 ///
 /// #### **<ins>Struct</ins>**
 /// ```Rust
-///     Redirection { fd: u32, target: String }
+///     Redirection { fd: u32, target: String, append: bool }
 /// ```
 /// Represents a single output redirection.
 ///
 /// ### Fields
-/// - `fd`: File descriptor number (1 = stdout)
+/// - `fd`: File descriptor number (1 = stdout, 2 = stderr)
 /// - `target`: Path to the target file
+/// - `append`: If true, append to file (`>>`); if false, truncate (`>`)
 ///
 #[derive(Debug, Clone)]
 pub struct Redirection {
     pub fd: u32,
     pub target: String,
+    pub append: bool,
 }
 
 ///
@@ -158,9 +160,11 @@ pub struct ParsedCommand {
 /// A `ParsedCommand` with redirections separated from command arguments.
 ///
 /// ### Supported Operators
-/// - `>` — redirect stdout (fd 1) to file (shorthand for `1>`)
-/// - `1>` — redirect stdout (fd 1) to file (explicit)
-/// - `2>` — redirect stderr (fd 2) to file
+/// - `>` — redirect stdout (fd 1) to file, truncate (shorthand for `1>`)
+/// - `1>` — redirect stdout (fd 1) to file, truncate (explicit)
+/// - `>>` — redirect stdout (fd 1) to file, append (shorthand for `1>>`)
+/// - `1>>` — redirect stdout (fd 1) to file, append (explicit)
+/// - `2>` — redirect stderr (fd 2) to file, truncate
 ///
 pub fn parse_redirections(args: Vec<String>) -> ParsedCommand {
     let mut cmd_args: Vec<String> = Vec::new();
@@ -171,12 +175,26 @@ pub fn parse_redirections(args: Vec<String>) -> ParsedCommand {
     while i < args.len() {
         let token = &args[i];
 
-        if token == ">" || token == "1>" {
-            // Next token is the target filename
+        if token == ">>" || token == "1>>" {
+            // Append stdout to file
             if i + 1 < args.len() {
                 stdout_redirect = Some(Redirection {
                     fd: 1,
                     target: args[i + 1].clone(),
+                    append: true,
+                });
+                i += 2;
+            } else {
+                eprintln!("syntax error near unexpected token `newline'");
+                i += 1;
+            }
+        } else if token == ">" || token == "1>" {
+            // Truncate stdout to file
+            if i + 1 < args.len() {
+                stdout_redirect = Some(Redirection {
+                    fd: 1,
+                    target: args[i + 1].clone(),
+                    append: false,
                 });
                 i += 2;
             } else {
@@ -184,20 +202,44 @@ pub fn parse_redirections(args: Vec<String>) -> ParsedCommand {
                 i += 1;
             }
         } else if token == "2>" {
-            // Next token is the target filename for stderr
+            // Truncate stderr to file
             if i + 1 < args.len() {
                 stderr_redirect = Some(Redirection {
                     fd: 2,
                     target: args[i + 1].clone(),
+                    append: false,
                 });
                 i += 2;
             } else {
                 eprintln!("syntax error near unexpected token `newline'");
                 i += 1;
             }
+        } else if token.ends_with(">>") && token.len() > 2 {
+            // Handle cases like "1>>" attached
+            let prefix = &token[..token.len() - 2];
+            if let Ok(fd) = prefix.parse::<u32>() {
+                if fd == 1 {
+                    if i + 1 < args.len() {
+                        stdout_redirect = Some(Redirection {
+                            fd: 1,
+                            target: args[i + 1].clone(),
+                            append: true,
+                        });
+                        i += 2;
+                    } else {
+                        eprintln!("syntax error near unexpected token `newline'");
+                        i += 1;
+                    }
+                } else {
+                    cmd_args.push(token.clone());
+                    i += 1;
+                }
+            } else {
+                cmd_args.push(token.clone());
+                i += 1;
+            }
         } else if token.ends_with(">") && token.len() > 1 {
-            // Handle cases like "1>" or "2>" attached to previous content
-            // Check if the prefix is a valid fd number
+            // Handle cases like "1>" or "2>" attached
             let prefix = &token[..token.len() - 1];
             if let Ok(fd) = prefix.parse::<u32>() {
                 if fd == 1 {
@@ -205,6 +247,7 @@ pub fn parse_redirections(args: Vec<String>) -> ParsedCommand {
                         stdout_redirect = Some(Redirection {
                             fd: 1,
                             target: args[i + 1].clone(),
+                            append: false,
                         });
                         i += 2;
                     } else {
@@ -216,6 +259,7 @@ pub fn parse_redirections(args: Vec<String>) -> ParsedCommand {
                         stderr_redirect = Some(Redirection {
                             fd: 2,
                             target: args[i + 1].clone(),
+                            append: false,
                         });
                         i += 2;
                     } else {

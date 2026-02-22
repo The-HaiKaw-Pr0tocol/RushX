@@ -60,6 +60,7 @@ pub fn run_rushx_shell() -> () {
         /*-- Parse redirections (>, 1>) from the argument list --*/
         let parsed = parser::parse_redirections(raw_args);
         let args = parsed.args;
+        let stdout_append = parsed.stdout_redirect.as_ref().map_or(false, |r| r.append);
         let stdout_file = parsed.stdout_redirect.map(|r| r.target);
         let stderr_file = parsed.stderr_redirect.map(|r| r.target);
 
@@ -70,13 +71,23 @@ pub fn run_rushx_shell() -> () {
         /*-- Helper: get a writer : either a file or stdout --*/
         /*-- Returns Box<dyn Write> so builtins can write transparently --*/
         let mut out: Box<dyn Write> = match &stdout_file {
-            Some(path) => match File::create(path) {
-                Ok(f) => Box::new(f),
-                Err(e) => {
-                    eprintln!("rushx: {}: {}", path, e);
-                    continue;
+            Some(path) => {
+                let file_result = if stdout_append {
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                } else {
+                    File::create(path)
+                };
+                match file_result {
+                    Ok(f) => Box::new(f),
+                    Err(e) => {
+                        eprintln!("rushx: {}: {}", path, e);
+                        continue;
+                    }
                 }
-            },
+            }
             None => Box::new(io::stdout()),
         };
 
@@ -162,6 +173,7 @@ pub fn run_rushx_shell() -> () {
                     &str_args,
                     stdout_file.as_deref(),
                     stderr_file.as_deref(),
+                    stdout_append,
                 );
             }
         }
