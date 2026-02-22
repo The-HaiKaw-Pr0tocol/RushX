@@ -2,9 +2,9 @@
 
 ### Overview
 
-RushX (Rust Shell - eXtended) is a POSIX-compliant \*NIX <ins>**terminal emulator**</ins> & <ins>**shell**</ins> implemented in Rust, focusing on low-level control over process creation, PTY management, job control, and terminal I/O. Rather than delegating behavior to external helpers, RushX directly interfaces with the operating system to manage sessions, process groups, signals, and controlling terminals. This approach enables precise control over foreground and background jobs while maintaining strong safety guarantees through Rust.
+RushX (Rust Shell - eXtended) is a POSIX-compliant Linux <ins>**terminal emulator**</ins> and <ins>**shell**</ins> implemented in Rust. It ships as a single binary: A GTK4-based terminal emulator that allocates a pseudoterminal (PTY) and renders output via Cairo, and calls by default an interactive POSIX-style shell that performs tokenization, redirection parsing, builtin dispatch, and `fork(2)`/`execvp(3)` execution of external commands.
 
-RushX is architected as a modular shell runtime, with clearly defined stages for lexical analysis, parsing, expansion, and execution. The execution engine is designed to handle pipelines, redirections, and builtins while maintaining POSIX semantics. Terminal handling is tightly integrated with the job-control layer, allowing RushX to function as both a terminal driver and an interactive terminal.
+RushX interfaces directly with the Linux kernel for process creation, session management, and controlling terminal assignment. No external libraries handle PTY allocation, signal delivery, or process lifecycle. The ***nix*** crate provides safe Rust wrappers around `openpty(3)`, `fork(2)`, `setsid(2)`, `dup2(2)`, `execvp(3)`, and `waitpid(2)`, while raw ***libc::ioctl*** is used for `TIOCSCTTY` where no safe wrapper exists.
 
 > Developed & Maintained by [The HaiKaw Pr0tocol](https://github.com/The-HaiKaw-Pr0tocol) organization.
 
@@ -67,7 +67,88 @@ RushX is architected as a modular shell runtime, with clearly defined stages for
 
 </div>
 
-## Proposed Architecture & Lifecycle _(for now)_
+---
+
+## Abstract
+
+This document describes the architecture and implementation of RushX, a combined terminal emulator and shell written in Rust. RushX is structured as three modules: `rushx_launcher` (CLI dispatch), `rushx_term` (GTK4 terminal emulator with integrated PTY backend), and `rushx_shell` (interactive REPL with tokenizer, redirection parser, builtin commands, and a `fork`/`execvp` execution engine). The terminal emulator spawns the shell via a self-re-exec pattern over a pseudoterminal pair, establishing a POSIX session with proper controlling terminal assignment. Bidirectional I/O between the emulator and the shell flows through the PTY master/slave file descriptors, bridged to the GTK rendering loop via a dedicated reader thread and an `mpsc` channel. This paper documents each subsystem at the syscall level, catalogs the current implementation status, and defines the roadmap toward full POSIX shell compliance.
+
+---
+
+## Table of Contents
+
+- [1. Introduction](#1-introduction)
+  - [1.1 Motivation](#11-motivation)
+  - [1.2 Design Principles](#12-design-principles)
+  - [1.3 Scope & Current State](#13-scope--current-state)
+- [2. Architecture](#2-architecture)
+  - [2.1 Modular Decomposition](#21-modular-decomposition)
+  - [2.2 Single-Binary Self-Re-Exec Model](#22-single-binary-self-re-exec-model)
+  - [2.3 Technology Stack](#23-technology-stack)
+- [3. Terminal Emulator (`rushx_term`)](#3-terminal-emulator-rushx_term)
+  - [3.1 PTY Allocation & Session Establishment](#31-pty-allocation--session-establishment)
+  - [3.2 PTY File Descriptor Topology](#32-pty-file-descriptor-topology)
+  - [3.3 Terminal I/O Pipeline](#33-terminal-io-pipeline)
+  - [3.4 Configuration](#34-configuration)
+- [4. Shell (`rushx_shell`)](#4-shell-rushx_shell)
+  - [4.1 REPL Loop](#41-repl-loop)
+  - [4.2 Parsing](#42-parsing)
+  - [4.3 Builtin Commands](#43-builtin-commands)
+  - [4.4 External Command Execution](#44-external-command-execution)
+  - [4.5 I/O Redirection Mechanism](#45-io-redirection-mechanism)
+- [5. POSIX Compliance & Syscall Interface](#5-posix-compliance--syscall-interface)
+- [6. Project Status & Roadmap](#6-project-status--roadmap)
+  - [6.1 Implementation Status Matrix](#61-implementation-status-matrix)
+  - [6.2 Known Limitations](#62-known-limitations)
+  - [6.3 Roadmap](#63-roadmap)
+- [7. Building & Installation](#7-building--installation)
+  - [7.1 Build from Source](#71-build-from-source)
+  - [7.2 Install via APT](#72-install-via-apt)
+- [8. License](#8-license)
+- [9. References](#9-references)
+
+---
+
+## 1. Introduction
+
+### 1.1 Motivation
+
+Most terminal emulators delegate shell functionality to `/bin/bash` or `/bin/sh`, treating the shell as an opaque subprocess. Conversely, most shells assume they run inside an existing terminal and never concern themselves with PTY allocation, screen rendering, or keyboard translation. RushX merges **both** roles into a <ins>single binary</ins> to expose and control every layer of the stack: from `openpty(3)` allocation and `setsid(2)` session creation, through byte-level I/O over the PTY master/slave pair, down to `fork(2)`/`execvp(3)` process overlay and `waitpid(2)` child reaping.
+
+The choice of Rust is deliberate. The `fork(2)` + `exec(3)` boundary is one of the most error-prone areas in systems programming: file descriptor leaks, use-after-fork of heap-allocated data, and async-signal-unsafe function calls in the child process are common sources of undefined behavior. Rust's ownership model and the `nix` crate's typed wrappers provide compile-time guarantees around resource lifecycle that C does not offer, while still permitting raw `libc` calls where no safe abstraction exists (e.g., `ioctl(TIOCSCTTY)`).
+
+### 1.2 Design Principles
+
+- **Single-binary architecture.** The terminal emulator and shell are compiled into one executable. Mode selection is determined at runtime by the presence of the `--rushx-shell` flag in `argv`. The terminal emulator spawns the shell by re-invoking itself via `/proc/self/exe`, eliminating the need for a separate shell binary or an embedded interpreter.
+
+- **Direct syscall interface.** RushX does not depend on `libvte`, `libreadline`, or any terminal abstraction library. PTY allocation, session management, fd wiring, process creation, and child lifecycle are handled through direct system calls wrapped by the `nix` crate. The only high-level dependency is GTK4 for window management and Cairo for text rendering.
+
+- **Modular decomposition.** The codebase is partitioned into three top-level modules (`rushx_launcher`, `rushx_term`, `rushx_shell`) with strict boundaries. The shell module is further decomposed into `parser`, `exec`, `core`, and `expand` submodules, each responsible for a single phase of command processing.
+
+- **Linux-first target.** RushX targets Linux exclusively. It relies on `/proc/self/exe` for self-re-exec, `TIOCSCTTY` for controlling terminal assignment, and glibc's `openpty(3)` for PTY pair allocation. No portability layer exists for macOS, FreeBSD, or other POSIX systems at this time.
+
+### 1.3 Scope & Current State
+
+> [!IMPORTANT]
+> RushX is in early development. The following capabilities are implemented and functional:
+
+| Subsystem | Status |
+|:----------|:-------|
+| GTK4 terminal window with Cairo text rendering | Functional |
+| PTY allocation, session establishment, self-re-exec | Functional |
+| Bidirectional I/O (reader thread, poll timer, keyboard handler) | Functional |
+| Shell REPL with prompt, line reading, EOF handling | Functional |
+| Quote-aware argument tokenizer (single, double, backslash) | Functional |
+| Output redirection parsing (`>`, `>>`, `1>`, `2>`, `2>>`) | Functional |
+| Builtin commands: `exit`, `echo`, `type`, `pwd`, `cd` | Functional |
+| External command execution via `fork`/`execvp`/`waitpid` | Functional |
+| CSI/OSC escape sequence stripping (partial) | Functional |
+
+The following are scaffolded (module files exist with documentation headers but no implementation): lexer, AST definitions, error types, shell state management, variable expansion, globbing, and PATH resolution (duplicated in `exec` but absent from `expand`). Pipelines, job control, signal handling, and VT100 terminal emulation are not yet implemented. Section 6 provides the complete status matrix and roadmap.
+
+---
+
+## 2. Architecture
 
 > [!IMPORTANT]
 > This represents our current architectural vision for RushX. As development progresses, this design may evolve based on implementation discoveries.
@@ -76,61 +157,192 @@ RushX is architected as a modular shell runtime, with clearly defined stages for
 
 ![RushX's Lifecycle](./assets/RushX_Lifecycle.png)
 
-_*Figure 1: **RushX Terminal & Shell Command Execution Lifecycle** - Architecture diagram depicting a five-phase process flow:*_
+_**Figure 1**: RushX Terminal & Shell Command Execution Lifecycle - Architecture overview depicting the five-phase process flow._
 
 </div>
 
-RushX operates mainly:
+### 2.1 Modular Decomposition
 
-1. The **RushX terminal emulator**.
-2. The **RushX shell**.
+<div align="center">
+    <img alt="RushX Modular Decomposition" src="./assets/1_RushX_Modules.png" width="1000"/>
+</div>
 
-### **I. Terminal Setup & Process Initialization**
+<div align="center">
 
-RushX begins with **process spawning** via `fork()` to establish the shell runtime, immediately followed by **PTY pair allocation** using `openpty()` or similar system calls. This creates the master-slave pseudoterminal infrastructure essential for terminal I/O redirection and job control.
+_**Figure 2**: RushX module hierarchy. Rounded boxes: top-level modules. Solid-border boxes: submodules. Inner boxes: subsubmodules._
 
-During initialization, the shell environment construction involves parsing relative `.rushxrc` configuration files, establishing environment variables, setting up signal handlers, and preparing the **interactive prompt interface**. The underlying **"plumbing"** infrastructure establishes mainly the file descriptor mappings to the PTY slave.
+</div>
 
----
+<!-- TODO -->
 
-### **II. REPL Loop & Command Processing**
+### 2.2 Single-Binary Self-Re-Exec Model
 
-The **REPL implementation** centers around efficient **byte stream processing**. All input is catched by the emulator, passedto the PTY Master, then forwarded. RushX performs **lexical analysis** on the input stream, breaking it into tokens while handling special characters, quotes, escape sequences, and command separators.
+<div align="center">
+    <img alt="RushX Self-Re-Exec Bootstrapping Sequence" src="./assets/2_RushX_Self-Re-Exec-bootstrap.png" width="1000"/>
+</div>
 
-**Syntactic parsing** follows immediately, where RushX constructs an **abstract syntax tree (AST)** representing command structures, pipelines, redirections, and control flow. For complex commands like a classic `ls -la | grep pattern > output.txt`, the parser identifies distinct processes, establishes pipeline relationships, and validates syntax before execution planning.
+<div align="center">
 
-The shell maintains **foreground process group control** over the PTY slave during this phase.
+_**Figure 3**: Self-re-exec bootstrapping sequence. Left swimlane: parent process (terminal emulator). Right swimlane: child process (shell). Dashed arrow marks the `fork(2)` boundary._
 
----
+</div>
 
-### **III. Command Execution & Process Management**
+<!-- TODO -->
 
-RushX's shell process spawns child processes accordingly and maintains **file descriptor inheritance** and **signal mask configuration**. The parent process immediately transfers **PTY slave ownership** to the child through `tcsetpgrp()`, to ensure proper foreground hand-off and proper job control semantics.
+### 2.3 Technology Stack
 
-A classic **Program overlay** follows via the `execve()` family of system calls, to perform **process image replacement**. The child process inherits the program binary, along with properly configured **environment variables**, **file descriptors**, and **signal dispositions** according to POSIX specifications.
-
----
-
-### **IV. Process Termination & Resource Recovery**
-
-Upon command completion, child processes terminate through `exit()` system calls, triggering **SIGCHLD signal delivery** to the parent shell process. RushX **signal handlers** respond afterwards to these notifications, preventing zombie process accumulation through a proper **wait() system call**.
-
-The shell performs **exit status collection**, **resource deallocation**, and **PTY ownership recovery** via `tcsetpgrp()` to restore PTY Slave control to the shell process. **Process group cleanup** ensures all background processes are properly managed according to job control specifications.
+<!-- TODO -->
 
 ---
 
-### **V. Cycle Continuation & Session Persistence**
+## 3. Terminal Emulator (`rushx_term`)
 
-RushX returns to the interactive state while maintaining **session continuity** through preserved **shell state**, **command history**, **environment variables**, and **job control tables**.
+### 3.1 PTY Allocation & Session Establishment
 
-**Background job monitoring** continues during interactive periods, with proper **signal handling** for job state changes, **terminal I/O coordination**, and **process group management** maintaining full POSIX job control compliance.
+<!-- TODO -->
+
+### 3.2 PTY File Descriptor Topology
+
+<div align="center">
+    <img alt="RushX PTY File Descriptor Topology" src="./assets/3_RushX_FD-Topology.png" width="1000"/>
+</div>
+
+<div align="center">
+
+_**Figure 4**: PTY file descriptor topology. Green arrows: shell input path (keyboard to stdin via master/slave). Blue arrows: shell output path (stdout/stderr through slave to master for screen rendering)._
+
+</div>
+
+<!-- TODO -->
+
+### 3.3 Terminal I/O Pipeline
+
+<div align="center">
+    <img alt="RushX Terminal Emulator I/O Pipeline" src="./assets/4_RushX_terminal_shell-IO-pipeline.png" width="1000"/>
+</div>
+
+<div align="center">
+
+_**Figure 5**: Terminal emulator bidirectional I/O pipeline. Left half: parent process (GTK main thread + reader thread). Center: kernel PTY layer. Right half: child process (shell REPL loop)._
+
+</div>
+
+#### 3.3.1 Reader Thread
+
+<!-- TODO -->
+
+#### 3.3.2 Poll Timer
+
+<!-- TODO -->
+
+#### 3.3.3 PTY Output Processing
+
+<!-- TODO -->
+
+#### 3.3.4 Rendering
+
+<!-- TODO -->
+
+#### 3.3.5 Keyboard Input
+
+<!-- TODO -->
+
+### 3.4 Configuration
+
+<!-- TODO -->
 
 ---
 
-## Install via APT (experimental for now)
+## 4. Shell (`rushx_shell`)
+
+### 4.1 REPL Loop
+
+<div align="center">
+    <img alt="RushX Shell REPL Dispatch Flowchart" src="./assets/5_RushX_Shell_REPL_Dispatch_Flowchart.png" width="700"/>
+</div>
+
+<div align="center">
+
+_**Figure 6**: Shell REPL dispatch flowchart. Diamonds: branch conditions. Rounded boxes: operations. Green arrows: normal flow. Red arrows: error/exit paths._
+
+</div>
+
+<!-- TODO -->
+
+### 4.2 Parsing
+
+#### 4.2.1 Argument Tokenization
+
+<!-- TODO -->
+
+#### 4.2.2 Redirection Parsing
+
+<!-- TODO -->
+
+### 4.3 Builtin Commands
+
+<!-- TODO -->
+
+### 4.4 External Command Execution
+
+#### 4.4.1 PATH Resolution
+
+<!-- TODO -->
+
+#### 4.4.2 Fork/Exec Lifecycle
+
+<!-- TODO -->
+
+### 4.5 I/O Redirection Mechanism
+
+<!-- TODO -->
+
+---
+
+## 5. POSIX Compliance & Syscall Interface
+
+<!-- TODO -->
+
+---
+
+## 6. Project Status & Roadmap
+
+### 6.1 Implementation Status Matrix
+
+<!-- TODO -->
+
+### 6.2 Known Limitations
+
+<!-- TODO -->
+
+### 6.3 Roadmap
+
+<!-- TODO -->
+
+---
+
+## 7. Building & Installation
+
+### 7.1 Build from Source
+
+<!-- TODO -->
+
+### 7.2 Install via APT
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/The-HaiKaw-Pr0tocol/rushx/main/install.sh | sudo bash
 
 sudo apt-get install -y rushx
 ```
+
+---
+
+## 8. License
+
+<!-- TODO -->
+
+---
+
+## 9. References
+
+<!-- TODO -->
