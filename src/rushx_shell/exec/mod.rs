@@ -56,7 +56,7 @@ use nix::unistd::{ForkResult, close, dup2, execvp, fork};
 /// The `execvp` C syscall function expects null-terminated strings. We convert Rust strings
 /// to `CString` (owned, null-terminated) to satisfy this.
 ///
-pub fn run_external(cmd: &str, args: &[&str], stdout_file: Option<&str>, stderr_file: Option<&str>, stdout_append: bool) -> () {
+pub fn run_external(cmd: &str, args: &[&str], stdout_file: Option<&str>, stderr_file: Option<&str>, stdout_append: bool, stderr_append: bool) -> () {
     match find_executable_in_path(cmd) {
         Some(path) => {
             let path_cstr = CString::new(path.to_str().unwrap()).unwrap();
@@ -92,9 +92,14 @@ pub fn run_external(cmd: &str, args: &[&str], stdout_file: Option<&str>, stderr_
                     /*-- If stderr redirection is requested, open target file --*/
                     /*-- and dup2 it onto fd 2 (stderr). --*/
                     if let Some(file_path) = stderr_file {
+                        let flags = if stderr_append {
+                            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND
+                        } else {
+                            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC
+                        };
                         let fd = open(
                             file_path,
-                            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
+                            flags,
                             Mode::from_bits_truncate(0o644),
                         )
                         .expect("failed to open stderr redirect target");

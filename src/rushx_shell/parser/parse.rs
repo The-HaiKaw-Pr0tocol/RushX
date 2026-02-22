@@ -165,6 +165,7 @@ pub struct ParsedCommand {
 /// - `>>` — redirect stdout (fd 1) to file, append (shorthand for `1>>`)
 /// - `1>>` — redirect stdout (fd 1) to file, append (explicit)
 /// - `2>` — redirect stderr (fd 2) to file, truncate
+/// - `2>>` — redirect stderr (fd 2) to file, append
 ///
 pub fn parse_redirections(args: Vec<String>) -> ParsedCommand {
     let mut cmd_args: Vec<String> = Vec::new();
@@ -214,14 +215,39 @@ pub fn parse_redirections(args: Vec<String>) -> ParsedCommand {
                 eprintln!("syntax error near unexpected token `newline'");
                 i += 1;
             }
+        } else if token == "2>>" {
+            // Append stderr to file
+            if i + 1 < args.len() {
+                stderr_redirect = Some(Redirection {
+                    fd: 2,
+                    target: args[i + 1].clone(),
+                    append: true,
+                });
+                i += 2;
+            } else {
+                eprintln!("syntax error near unexpected token `newline'");
+                i += 1;
+            }
         } else if token.ends_with(">>") && token.len() > 2 {
-            // Handle cases like "1>>" attached
+            // Handle cases like "1>>" or "2>>" attached
             let prefix = &token[..token.len() - 2];
             if let Ok(fd) = prefix.parse::<u32>() {
                 if fd == 1 {
                     if i + 1 < args.len() {
                         stdout_redirect = Some(Redirection {
                             fd: 1,
+                            target: args[i + 1].clone(),
+                            append: true,
+                        });
+                        i += 2;
+                    } else {
+                        eprintln!("syntax error near unexpected token `newline'");
+                        i += 1;
+                    }
+                } else if fd == 2 {
+                    if i + 1 < args.len() {
+                        stderr_redirect = Some(Redirection {
+                            fd: 2,
                             target: args[i + 1].clone(),
                             append: true,
                         });
