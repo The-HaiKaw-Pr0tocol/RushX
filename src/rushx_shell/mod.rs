@@ -57,17 +57,18 @@ pub fn run_rushx_shell() -> () {
             continue;
         }
 
-        // Parse redirections (>, 1>) from the argument list
+        /*-- Parse redirections (>, 1>) from the argument list --*/
         let parsed = parser::parse_redirections(raw_args);
         let args = parsed.args;
         let stdout_file = parsed.stdout_redirect.map(|r| r.target);
+        let stderr_file = parsed.stderr_redirect.map(|r| r.target);
 
         if args.is_empty() {
             continue;
         }
 
-        // Helper: get a writer — either a file or stdout
-        // Returns Box<dyn Write> so builtins can write transparently
+        /*-- Helper: get a writer : either a file or stdout --*/
+        /*-- Returns Box<dyn Write> so builtins can write transparently --*/
         let mut out: Box<dyn Write> = match &stdout_file {
             Some(path) => match File::create(path) {
                 Ok(f) => Box::new(f),
@@ -77,6 +78,18 @@ pub fn run_rushx_shell() -> () {
                 }
             },
             None => Box::new(io::stdout()),
+        };
+
+        /*-- Helper: get an error writer — either a file or stderr --*/
+        let mut err: Box<dyn Write> = match &stderr_file {
+            Some(path) => match File::create(path) {
+                Ok(f) => Box::new(f),
+                Err(e) => {
+                    eprintln!("rushx: {}: {}", path, e);
+                    continue;
+                }
+            },
+            None => Box::new(io::stderr()),
         };
 
         match args[0].as_str() {
@@ -105,7 +118,7 @@ pub fn run_rushx_shell() -> () {
             "pwd" => {
                 match env::current_dir() {
                     Ok(path) => { writeln!(out, "{}", path.display()).ok(); }
-                    Err(e) => eprintln!("pwd: {}", e),
+                    Err(e) => { writeln!(err, "pwd: {}", e).ok(); }
                 }
             }
             "cd" => {
@@ -119,7 +132,7 @@ pub fn run_rushx_shell() -> () {
                             prev.clone()
                         }
                         None => {
-                            eprintln!("cd: OLDPWD not set");
+                            writeln!(err, "cd: OLDPWD not set").ok();
                             continue;
                         }
                     }
@@ -134,12 +147,12 @@ pub fn run_rushx_shell() -> () {
                         .ok()
                         .map(|p| p.to_string_lossy().to_string());
                     if let Err(e) = env::set_current_dir(path) {
-                        eprintln!("cd: {}: {}", resolved, e);
+                        writeln!(err, "cd: {}: {}", resolved, e).ok();
                     } else {
                         oldpwd = current;
                     }
                 } else {
-                    eprintln!("cd: {}: No such file or directory", resolved);
+                    writeln!(err, "cd: {}: No such file or directory", resolved).ok();
                 }
             }
             _ => {
@@ -148,6 +161,7 @@ pub fn run_rushx_shell() -> () {
                     &args[0],
                     &str_args,
                     stdout_file.as_deref(),
+                    stderr_file.as_deref(),
                 );
             }
         }

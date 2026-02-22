@@ -133,7 +133,7 @@ pub struct Redirection {
 ///
 /// #### **<ins>Struct</ins>**
 /// ```Rust
-///     ParsedCommand { args: Vec<String>, stdout_redirect: Option<Redirection> }
+///     ParsedCommand { args: Vec<String>, stdout_redirect: Option<Redirection>, stderr_redirect: Option<Redirection> }
 /// ```
 /// A parsed command with its arguments and optional redirections.
 ///
@@ -141,6 +141,7 @@ pub struct Redirection {
 pub struct ParsedCommand {
     pub args: Vec<String>,
     pub stdout_redirect: Option<Redirection>,
+    pub stderr_redirect: Option<Redirection>,
 }
 
 ///
@@ -148,7 +149,7 @@ pub struct ParsedCommand {
 /// ```Rust
 ///     parse_redirections(args: Vec<String>) -> ParsedCommand
 /// ```
-/// Scans parsed argument tokens for output redirections (`>` or `1>`).
+/// Scans parsed argument tokens for output redirections (`>`, `1>`, `2>`).
 ///
 /// ### Arguments
 /// - `args`: Token vector from `parse_args`
@@ -159,10 +160,12 @@ pub struct ParsedCommand {
 /// ### Supported Operators
 /// - `>` — redirect stdout (fd 1) to file (shorthand for `1>`)
 /// - `1>` — redirect stdout (fd 1) to file (explicit)
+/// - `2>` — redirect stderr (fd 2) to file
 ///
 pub fn parse_redirections(args: Vec<String>) -> ParsedCommand {
     let mut cmd_args: Vec<String> = Vec::new();
     let mut stdout_redirect: Option<Redirection> = None;
+    let mut stderr_redirect: Option<Redirection> = None;
     let mut i = 0;
 
     while i < args.len() {
@@ -180,8 +183,20 @@ pub fn parse_redirections(args: Vec<String>) -> ParsedCommand {
                 eprintln!("syntax error near unexpected token `newline'");
                 i += 1;
             }
+        } else if token == "2>" {
+            // Next token is the target filename for stderr
+            if i + 1 < args.len() {
+                stderr_redirect = Some(Redirection {
+                    fd: 2,
+                    target: args[i + 1].clone(),
+                });
+                i += 2;
+            } else {
+                eprintln!("syntax error near unexpected token `newline'");
+                i += 1;
+            }
         } else if token.ends_with(">") && token.len() > 1 {
-            // Handle cases like "1>" attached to previous content
+            // Handle cases like "1>" or "2>" attached to previous content
             // Check if the prefix is a valid fd number
             let prefix = &token[..token.len() - 1];
             if let Ok(fd) = prefix.parse::<u32>() {
@@ -189,6 +204,17 @@ pub fn parse_redirections(args: Vec<String>) -> ParsedCommand {
                     if i + 1 < args.len() {
                         stdout_redirect = Some(Redirection {
                             fd: 1,
+                            target: args[i + 1].clone(),
+                        });
+                        i += 2;
+                    } else {
+                        eprintln!("syntax error near unexpected token `newline'");
+                        i += 1;
+                    }
+                } else if fd == 2 {
+                    if i + 1 < args.len() {
+                        stderr_redirect = Some(Redirection {
+                            fd: 2,
                             target: args[i + 1].clone(),
                         });
                         i += 2;
@@ -213,5 +239,6 @@ pub fn parse_redirections(args: Vec<String>) -> ParsedCommand {
     ParsedCommand {
         args: cmd_args,
         stdout_redirect,
+        stderr_redirect,
     }
 }
