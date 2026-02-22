@@ -21,3 +21,4 @@ pub mod lexer;
 pub mod parse;
 
 pub use parse::parse_args;
+pub use parse::{ParsedCommand, Redirection, parse_redirections};

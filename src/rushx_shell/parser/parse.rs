@@ -112,3 +112,106 @@ pub fn parse_args(input: &str) -> Vec<String> {
 
     args
 }
+
+///
+/// #### **<ins>Struct</ins>**
+/// ```Rust
+///     Redirection { fd: u32, target: String }
+/// ```
+/// Represents a single output redirection.
+///
+/// ### Fields
+/// - `fd`: File descriptor number (1 = stdout)
+/// - `target`: Path to the target file
+///
+#[derive(Debug, Clone)]
+pub struct Redirection {
+    pub fd: u32,
+    pub target: String,
+}
+
+///
+/// #### **<ins>Struct</ins>**
+/// ```Rust
+///     ParsedCommand { args: Vec<String>, stdout_redirect: Option<Redirection> }
+/// ```
+/// A parsed command with its arguments and optional redirections.
+///
+#[derive(Debug, Clone)]
+pub struct ParsedCommand {
+    pub args: Vec<String>,
+    pub stdout_redirect: Option<Redirection>,
+}
+
+///
+/// #### **<ins>Function</ins>**
+/// ```Rust
+///     parse_redirections(args: Vec<String>) -> ParsedCommand
+/// ```
+/// Scans parsed argument tokens for output redirections (`>` or `1>`).
+///
+/// ### Arguments
+/// - `args`: Token vector from `parse_args`
+///
+/// ### Returns
+/// A `ParsedCommand` with redirections separated from command arguments.
+///
+/// ### Supported Operators
+/// - `>` — redirect stdout (fd 1) to file (shorthand for `1>`)
+/// - `1>` — redirect stdout (fd 1) to file (explicit)
+///
+pub fn parse_redirections(args: Vec<String>) -> ParsedCommand {
+    let mut cmd_args: Vec<String> = Vec::new();
+    let mut stdout_redirect: Option<Redirection> = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        let token = &args[i];
+
+        if token == ">" || token == "1>" {
+            // Next token is the target filename
+            if i + 1 < args.len() {
+                stdout_redirect = Some(Redirection {
+                    fd: 1,
+                    target: args[i + 1].clone(),
+                });
+                i += 2;
+            } else {
+                eprintln!("syntax error near unexpected token `newline'");
+                i += 1;
+            }
+        } else if token.ends_with(">") && token.len() > 1 {
+            // Handle cases like "1>" attached to previous content
+            // Check if the prefix is a valid fd number
+            let prefix = &token[..token.len() - 1];
+            if let Ok(fd) = prefix.parse::<u32>() {
+                if fd == 1 {
+                    if i + 1 < args.len() {
+                        stdout_redirect = Some(Redirection {
+                            fd: 1,
+                            target: args[i + 1].clone(),
+                        });
+                        i += 2;
+                    } else {
+                        eprintln!("syntax error near unexpected token `newline'");
+                        i += 1;
+                    }
+                } else {
+                    cmd_args.push(token.clone());
+                    i += 1;
+                }
+            } else {
+                cmd_args.push(token.clone());
+                i += 1;
+            }
+        } else {
+            cmd_args.push(token.clone());
+            i += 1;
+        }
+    }
+
+    ParsedCommand {
+        args: cmd_args,
+        stdout_redirect,
+    }
+}

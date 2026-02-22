@@ -27,8 +27,10 @@ use std::ffi::CString;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
+use nix::fcntl::{OFlag, open};
+use nix::sys::stat::Mode;
 use nix::sys::wait::{WaitStatus, waitpid};
-use nix::unistd::{ForkResult, execvp, fork};
+use nix::unistd::{ForkResult, close, dup2, execvp, fork};
 
 ///
 /// #### **<ins>Function</ins>** 
@@ -54,7 +56,7 @@ use nix::unistd::{ForkResult, execvp, fork};
 /// The `execvp` C syscall function expects null-terminated strings. We convert Rust strings
 /// to `CString` (owned, null-terminated) to satisfy this.
 ///
-pub fn run_external(cmd: &str, args: &[&str]) -> () {
+pub fn run_external(cmd: &str, args: &[&str], stdout_file: Option<&str>) -> () {
     match find_executable_in_path(cmd) {
         Some(path) => {
             let path_cstr = CString::new(path.to_str().unwrap()).unwrap();
@@ -69,6 +71,18 @@ pub fn run_external(cmd: &str, args: &[&str]) -> () {
 
             match unsafe { fork() } {
                 Ok(ForkResult::Child) => {
+                    /*-- If stdout redirection is requested, open target file --*/ 
+                    /*-- and dup2 it onto fd 1 (stdout). Stderr (fd 2) is untouched. --*/
+                    if let Some(file_path) = stdout_file {
+                        let fd = open(
+                            file_path,
+                            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
+                            Mode::from_bits_truncate(0o644),
+                        )
+                        .expect("failed to open redirect target");
+                        dup2(fd, 1).expect("dup2 failed");
+                        close(fd).ok();
+                    }
                     execvp(&path_cstr, &c_args).expect("execvp failed");
                 }
                 Ok(ForkResult::Parent { child }) => match waitpid(child, None) {
@@ -105,32 +119,6 @@ pub fn run_external(cmd: &str, args: &[&str]) -> () {
 ///
 pub fn is_builtin(cmd: &str) -> bool {
     matches!(cmd, "exit" | "echo" | "type" | "pwd" | "cd")
-}
-
-///
-/// #### **<ins>Function</ins>** 
-/// ```Rust
-///     type_command(cmd: &str) -> ()
-/// ```
-/// Implements the `type` builtin command.
-///
-/// ### Arguments
-/// - `cmd`: Command name to inspect
-///
-/// ### Output
-/// - Prints whether `cmd` is a builtin or external (with full path)
-/// - Prints "not found" if neither
-///
-pub fn type_command(cmd: &str) -> () {
-    if is_builtin(cmd) {
-        println!("{} is a shell builtin", cmd);
-        return;
-    }
-
-    match find_executable_in_path(cmd) {
-        Some(path) => println!("{} is {}", cmd, path.display()),
-        None => println!("{}: not found", cmd),
-    }
 }
 
 ///
