@@ -21,8 +21,43 @@ pub mod expand;
 pub mod parser;
 
 use std::env;
+use std::fs;
 use std::fs::File;
 use std::io::{self, Write};
+
+///
+/// #### **<ins>Function</ins>**
+/// ```Rust
+///     build_prompt() -> String
+/// ```
+/// Builds the shell prompt string: `user@hostname:cwd$ `.
+///
+/// ### Behavior
+/// - Reads username from `$USER` env var (fallback: `"rushx"`)
+/// - Reads hostname from `/etc/hostname` (fallback: `"localhost"`)
+/// - Reads current directory via `std::env::current_dir()`
+/// - Replaces `$HOME` prefix with `~` in the displayed path
+///
+fn build_prompt() -> String {
+    let user = env::var("USER").unwrap_or_else(|_| "rushx".to_string());
+
+    let hostname = fs::read_to_string("/etc/hostname")
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "localhost".to_string());
+
+    let cwd = env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "?".to_string());
+
+    let home = env::var("HOME").unwrap_or_default();
+    let display_cwd = if !home.is_empty() && cwd.starts_with(&home) {
+        format!("~{}", &cwd[home.len()..])
+    } else {
+        cwd
+    };
+
+    format!("{}@{}:{}$ ", user, hostname, display_cwd)
+}
 
 ///
 /// #### **<ins>Function</ins>** 
@@ -32,7 +67,7 @@ use std::io::{self, Write};
 /// Main interactive shell REPL loop.
 ///
 /// ### Behavior
-/// - Prints prompt (`$ `)
+/// - Prints prompt (`user@hostname:cwd$ `) with username, hostname, and current directory
 /// - Reads line from stdin
 /// - Parses whitespace-delimited arguments
 /// - Dispatches builtins (`exit`, `echo`, `type`, `pwd`, `cd`) or external commands
@@ -43,7 +78,7 @@ use std::io::{self, Write};
 pub fn run_rushx_shell() -> () {
     let mut oldpwd: Option<String> = None;
     loop {
-        print!("$ ");
+        print!("{}", build_prompt());
         io::stdout().flush().unwrap();
 
         let mut input_buffer = String::new();
