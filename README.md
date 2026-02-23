@@ -2,9 +2,9 @@
 
 ### Overview
 
-RushX (Rust Shell - eXtended) is a POSIX-compliant Linux <ins>**terminal emulator**</ins> and <ins>**shell**</ins> implemented in Rust. It ships as a single binary: A GTK4-based terminal emulator that allocates a pseudoterminal (PTY) and renders output via Cairo, and calls by default an interactive POSIX-style shell that performs tokenization, redirection parsing, builtin dispatch, and `fork(2)`/`execvp(3)` execution of external commands.
+RushX (Rust Shell - eXtended) is a POSIX-compliant Linux <ins>**terminal emulator**</ins> & <ins>**shell**</ins> implemented in Rust. It ships as a single binary: A GTK4-based terminal emulator that allocates a pseudoterminal (PTY) and renders output via Cairo, and calls by default an interactive POSIX-style shell that performs tokenization, redirection parsing, builtin dispatch, and `fork(2)`/`execvp(3)` execution of external commands.
 
-RushX interfaces directly with the Linux kernel for process creation, session management, and controlling terminal assignment. No external libraries handle PTY allocation, signal delivery, or process lifecycle. The ***nix*** crate provides safe Rust wrappers around `openpty(3)`, `fork(2)`, `setsid(2)`, `dup2(2)`, `execvp(3)`, and `waitpid(2)`, while raw ***libc::ioctl*** is used for `TIOCSCTTY` where no safe wrapper exists.
+RushX interfaces directly with the Linux kernel for process creation, session management, and controlling terminal assignment. No external libraries handle PTY allocation, signal delivery, or process lifecycle. The <ins>**_nix_**</ins> crate provides safe Rust wrappers around the main syscalls (**_openpty(3)_**, **_fork(2)_**, **_setsid(2)_**, **_dup2(2)_**, **_execvp(3)_**, and **_waitpid(2)_**), while raw <ins>**_libc::ioctl_**</ins> is used for `TIOCSCTTY` where no safe wrapper exists.
 
 > Developed & Maintained by [The HaiKaw Pr0tocol](https://github.com/The-HaiKaw-Pr0tocol) organization.
 
@@ -77,10 +77,7 @@ This document describes the architecture and implementation of RushX, a combined
 
 ## Table of Contents
 
-- [1. Introduction](#1-introduction)
-  - [1.1 Motivation](#11-motivation)
-  - [1.2 Design Principles](#12-design-principles)
-  - [1.3 Scope & Current State](#13-scope--current-state)
+- [1. Introduction & Motivation](#1-introduction--motivation)
 - [2. Architecture](#2-architecture)
   - [2.1 Modular Decomposition](#21-modular-decomposition)
   - [2.2 Single-Binary Self-Re-Exec Model](#22-single-binary-self-re-exec-model)
@@ -109,42 +106,21 @@ This document describes the architecture and implementation of RushX, a combined
 
 ---
 
-## 1. Introduction
+## 1. Introduction & Motivation
 
-### 1.1 Motivation
+<div align="center">
+    <img alt="Terminal emulators under the hood" src="./assets/terminal_emulators_unnder-the-hood.png" width="800"/>
+</div>
 
-Most terminal emulators delegate shell functionality to `/bin/bash` or `/bin/sh`, treating the shell as an opaque subprocess. Conversely, most shells assume they run inside an existing terminal and never concern themselves with PTY allocation, screen rendering, or keyboard translation. RushX merges **both** roles into a <ins>single binary</ins> to expose and control every layer of the stack: from `openpty(3)` allocation and `setsid(2)` session creation, through byte-level I/O over the PTY master/slave pair, down to `fork(2)`/`execvp(3)` process overlay and `waitpid(2)` child reaping.
+<div align="center">
 
-The choice of Rust is deliberate. The `fork(2)` + `exec(3)` boundary is one of the most error-prone areas in systems programming: file descriptor leaks, use-after-fork of heap-allocated data, and async-signal-unsafe function calls in the child process are common sources of undefined behavior. Rust's ownership model and the `nix` crate's typed wrappers provide compile-time guarantees around resource lifecycle that C does not offer, while still permitting raw `libc` calls where no safe abstraction exists (e.g., `ioctl(TIOCSCTTY)`).
+_The general architecture of a terminal emulator: User input flows through the emulator into the PTY master, the kernel relays it to the slave side where the shell reads it, and output travels back the same path for rendering. Source: [Terminal Emulators Under the Hood](https://funinkina.is-a.dev/blog/terminal-emulators-under-the-hood/)._
 
-### 1.2 Design Principles
+</div>
 
-- **Single-binary architecture.** The terminal emulator and shell are compiled into one executable. Mode selection is determined at runtime by the presence of the `--rushx-shell` flag in `argv`. The terminal emulator spawns the shell by re-invoking itself via `/proc/self/exe`, eliminating the need for a separate shell binary or an embedded interpreter.
+Most terminal emulators delegate shell functionality to external shell programs, like `/bin/bash` or `/bin/sh`, treating the shell as an opaque subprocess. Most shells, conversely, assume they run inside an existing terminal and never concern themselves with PTY allocation, screen rendering, or keyboard translation.
 
-- **Direct syscall interface.** RushX does not depend on `libvte`, `libreadline`, or any terminal abstraction library. PTY allocation, session management, fd wiring, process creation, and child lifecycle are handled through direct system calls wrapped by the `nix` crate. The only high-level dependency is GTK4 for window management and Cairo for text rendering.
-
-- **Modular decomposition.** The codebase is partitioned into three top-level modules (`rushx_launcher`, `rushx_term`, `rushx_shell`) with strict boundaries. The shell module is further decomposed into `parser`, `exec`, `core`, and `expand` submodules, each responsible for a single phase of command processing.
-
-- **Linux-first target.** RushX targets Linux exclusively. It relies on `/proc/self/exe` for self-re-exec, `TIOCSCTTY` for controlling terminal assignment, and glibc's `openpty(3)` for PTY pair allocation. No portability layer exists for macOS, FreeBSD, or other POSIX systems at this time.
-
-### 1.3 Scope & Current State
-
-> [!IMPORTANT]
-> RushX is in early development. The following capabilities are implemented and functional:
-
-| Subsystem | Status |
-|:----------|:-------|
-| GTK4 terminal window with Cairo text rendering | Functional |
-| PTY allocation, session establishment, self-re-exec | Functional |
-| Bidirectional I/O (reader thread, poll timer, keyboard handler) | Functional |
-| Shell REPL with prompt, line reading, EOF handling | Functional |
-| Quote-aware argument tokenizer (single, double, backslash) | Functional |
-| Output redirection parsing (`>`, `>>`, `1>`, `2>`, `2>>`) | Functional |
-| Builtin commands: `exit`, `echo`, `type`, `pwd`, `cd` | Functional |
-| External command execution via `fork`/`execvp`/`waitpid` | Functional |
-| CSI/OSC escape sequence stripping (partial) | Functional |
-
-The following are scaffolded (module files exist with documentation headers but no implementation): lexer, AST definitions, error types, shell state management, variable expansion, globbing, and PATH resolution (duplicated in `exec` but absent from `expand`). Pipelines, job control, signal handling, and VT100 terminal emulation are not yet implemented. Section 6 provides the complete status matrix and roadmap.
+RushX merges both roles into a <ins>**single binary**</ins>. One process handles every layer of the stack: `openpty(3)` allocation, `setsid(2)` session creation, byte-level I/O over the PTY master/slave pair, `fork(2)`/`execvp(3)` process overlay, and `waitpid(2)` child reaping.
 
 ---
 
