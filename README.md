@@ -122,8 +122,6 @@ Now mosst terminal emulators treat the shell as an opaque subprocess, while shel
 
 **RushX collapses this split into a single binary.** One process owns PTY setup, session creation, byte-level I/O, `fork`/`exec`, and child reaping, merging terminal and shell into one program.
 
----
-
 ## 2. Architecture
 
 > [!IMPORTANT]
