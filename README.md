@@ -184,11 +184,15 @@ Figure 2 maps out the full module tree. RushX is partitioned into 3 top-level mo
 
 1. **`rushx_launcher`** is the thinnest layer. It contains a single function : **run()**, that inspects **_argv_** for an experimental <ins>**--rushx-shell**</ins> flag and branches into either **rushx_term::run_rushx_terminal()** or **rushx_shell::run_rushx_shell()**. No other logic lives here. Its used to test the shell independently and to kind of fork the shell process from the same binary when the terminal emulators spawns it.
 
+---
+
 2. **`rushx_term`** is the terminal emulator. Its root : [mod.rs](./src/rushx_term/mod.rs) builds the GTK4 window, wires the I/O pipeline (reader thread, poll timer, draw function, blink timer, keyboard handler), and runs the **process_pty_output()** state machine that strips escape sequences and feeds characters to the Cairo renderer. Two submodules support it:
 
    - **2.1** _<ins>`pty`</ins>_ : Allocates the PTY master/slave pair and spawns the shell child process via fork/exec.
 
    - **2.2** _<ins>`config`</ins>_ : Defines compile-time constants: application ID, window geometry, colors, font, shell path (**_/proc/self/exe_**), shell flag (**_--rushx-shell_**), and buffer sizes.
+
+---
 
 3. **`rushx_shell`** is the RushX shell. Its root [mod.rs](./src/rushx_shell/mod.rs) runs the REPL loop: print prompt, read line, dispatch to builtin or external command. Four submodules handle the rest:
 
@@ -210,15 +214,38 @@ Figure 2 maps out the full module tree. RushX is partitioned into 3 top-level mo
 
 <div align="center">
 
-_**Figure 3**: Self-re-exec bootstrapping sequence. Left swimlane: parent process (terminal emulator). Right swimlane: child process (shell). Dashed arrow marks the `fork(2)` boundary._
+_**Figure 3**: Self-re-exec bootstrapping sequence. Left swimlane: parent process (terminal emulator). Right swimlane: child process (shell). Dashed arrow marks the fork(2) boundary._
 
 </div>
 
-<!-- TODO -->
+Figure 3 traces the bootstrapping sequence step by step. The entire ceremony happens inside <ins>**spawn_shell()**</ins> in [pty.rs](src/rushx_term/pty.rs), called once at terminal startup.
 
-### 2.3 Technology Stack
+The parent process (terminal emulator) begins by calling **openpty(3)** to allocate a PTY master/slave pair. It then prepares the **CString** arguments for **execvp** while still single-threaded, before any **fork(2)**. 
 
-<!-- TODO -->
+> [!CAUTION]
+> This is important: heap allocation after fork is unsafe in a multithreaded process, so all `CString` construction happens on the parent side.
+
+The parent then calls **fork(2)**. From this point, two processes exist with identical memory.
+
+**Child path (right swimlane):**
+
+1. Close the master fd. The child has no use for it.
+2. ***setsid(2)*** to create a new session. The child becomes session leader, detached from the parent's controlling terminal.
+3. ***ioctl(slave_fd, TIOCSCTTY)*** to claim the PTY slave as the session's controlling terminal. This is a raw `libc::ioctl` call because no safe Rust wrapper exists.
+4. ***dup2(slave_fd, 0)***, ***dup2(slave_fd, 1)***, ***dup2(slave_fd, 2)*** to wire stdin, stdout, and stderr to the slave.
+5. Close the original slave fd (it is now duplicated onto fds 0, 1, 2).
+6. ***execvp("/proc/self/exe", ["rushx", "--rushx-shell"])*** to overlay the child's memory with a fresh invocation of the same binary. The **--rushx-shell** flag causes ***rushx_launcher::run()*** to branch into ***rushx_shell::run_rushx_shell()*** instead of launching another terminal window.
+
+If ***execvp*** fails, the child calls ***libc::_exit(1)*** directly to avoid running Rust destructors or ***atexit*** handlers in the forked address space.
+
+**Parent path (left swimlane):**
+
+1. Close the slave fd. Only the child uses it.
+2. Return `SpawnedShell { master_fd, child_pid }` to the terminal emulator, which uses ***master_fd*** for all subsequent I/O and ***child_pid*** for lifecycle management.
+
+The key insight is that `/proc/self/exe` always points to the currently running binary. The child does not spawn an external shell; it re-executes itself. The flag in ***argv*** is the only thing that distinguishes a terminal emulator process from a shell process.
+
+<br />
 
 ---
 
