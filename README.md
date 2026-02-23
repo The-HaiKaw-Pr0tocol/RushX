@@ -88,17 +88,21 @@ RushX interfaces directly with the Linux kernel for process creation, session ma
 - [4. Shell (`rushx_shell`)](#4-shell-rushx_shell)
   - [4.1 REPL Loop](#41-repl-loop)
   - [4.2 Parsing](#42-parsing)
+    - [4.2.1 Argument Tokenization](#421-argument-tokenization)
+    - [4.2.2 Redirection Parsing](#422-redirection-parsing)
   - [4.3 Builtin Commands](#43-builtin-commands)
   - [4.4 External Command Execution](#44-external-command-execution)
+    - [4.4.1 PATH Resolution](#441-path-resolution)
+    - [4.4.2 Fork/Exec Lifecycle](#442-forkexec-lifecycle)
   - [4.5 I/O Redirection Mechanism](#45-io-redirection-mechanism)
 - [5. POSIX Compliance & Syscall Interface](#5-posix-compliance--syscall-interface)
 - [6. Project Status & Roadmap](#6-project-status--roadmap)
   - [6.1 Implementation Status Matrix](#61-implementation-status-matrix)
   - [6.2 Known Limitations](#62-known-limitations)
   - [6.3 Roadmap](#63-roadmap)
-- [7. Building & Installation](#7-building--installation)
-  - [7.1 Build from Source](#71-build-from-source)
-  - [7.2 Install via APT](#72-install-via-apt)
+- [7. Installation & Building](#7-installation--building)
+  - [7.1 Install via APT](#72-install-via-apt)
+  - [7.2 Build from Source](#71-build-from-source)
 - [8. License](#8-license)
 - [9. References](#9-references)
 
@@ -225,32 +229,26 @@ _**Figure 3**: Self-re-exec bootstrapping sequence. Left swimlane: parent proces
 
 <br />
 
-Figure 3 traces the bootstrapping sequence step by step. The entire ceremony happens inside <ins>**spawn_shell()**</ins> in [pty.rs](src/rushx_term/pty.rs), called once at terminal startup.
+Figure 3 traces the bootstrapping sequence step by step. The entire ceremony happens inside **spawn_shell()** in [pty.rs](src/rushx_term/pty.rs), called once at terminal startup.
 
-The parent process (terminal emulator) begins by calling **openpty(3)** to allocate a PTY master/slave pair. It then prepares the **CString** arguments for **execvp** while still single-threaded, before any **fork(2)**.
+The parent process starts by allocating a PTY master/slave pair, then prepares the arguments it will need for exec while still single-threaded.
 
 > [!CAUTION]
-> This is important: heap allocation after fork is unsafe in a multithreaded process, so all `CString` construction happens on the parent side.
+> Heap allocation after fork is unsafe in a multithreaded process, so all string construction happens before the fork.
 
-The parent then calls **fork(2)**. From this point, two processes exist with identical memory.
+It then calls **fork(2)**. From this point, two processes exist with identical memory.
 
 **<ins>Child path (right swimlane)</ins>:**
 
-1. Close the master fd. The child has no use for it.
-2. **_setsid(2)_** to create a new session. The child becomes session leader, detached from the parent's controlling terminal.
-3. **_ioctl(slave_fd, TIOCSCTTY)_** to claim the PTY slave as the session's controlling terminal. This is a raw `libc::ioctl` call because no safe Rust wrapper exists.
-4. **_dup2(slave_fd, 0)_**, **_dup2(slave_fd, 1)_**, **_dup2(slave_fd, 2)_** to wire stdin, stdout, and stderr to the slave.
-5. Close the original slave fd (it is now duplicated onto fds 0, 1, 2).
-6. **_execvp("/proc/self/exe", ["rushx", "--rushx-shell"])_** to overlay the child's memory with a fresh invocation of the same binary. The **--rushx-shell** flag causes **_rushx_launcher::run()_** to branch into **_rushx_shell::run_rushx_shell()_** instead of launching another terminal window.
+The child closes the master fd (only the parent needs it), creates a new session with **setsid**, and claims the PTY slave as its controlling terminal via **ioctl(TIOCSCTTY)**. It then wires stdin, stdout, and stderr to the slave with three **dup2** calls, closes the now-redundant original slave fd, and calls **execvp** to re-execute the same binary with the **--rushx-shell** flag. That flag is what tells the launcher to start the shell instead of another terminal window.
 
-If **_execvp_** fails, the child calls **_libc::\_exit(1)_** directly to avoid running Rust destructors or **_atexit_** handlers in the forked address space.
+If exec fails, the child exits immediately without running any Rust cleanup, to avoid corrupting shared state in the forked address space.
 
 **<ins>Parent path (left swimlane):</ins>**
 
-1. Close the slave fd. Only the child uses it.
-2. Return `SpawnedShell { master_fd, child_pid }` to the terminal emulator, which uses **_master_fd_** for all subsequent I/O and **_child_pid_** for lifecycle management.
+The parent closes the slave fd (only the child needs it) and returns the master fd and child PID to the terminal emulator. From this point on, the master fd is the emulator's sole communication channel with the shell.
 
-The key insight is that `/proc/self/exe` always points to the currently running binary. The child does not spawn an external shell; it re-executes itself. The flag in **_argv_** is the only thing that distinguishes a terminal emulator process from a shell process.
+The key insight is that /proc/self/exe always points to the currently running binary. The child does not spawn an external shell; it re-executes itself. The flag in argv is the only thing that distinguishes a terminal emulator process from a shell process.
 
 <br />
 
@@ -264,16 +262,11 @@ The key insight is that `/proc/self/exe` always points to the currently running 
 
 ### 3.1 PTY Allocation & Session Establishment
 
-The terminal emulator's first action in **_run_rushx_terminal()_** is to set up the PTY pair and spawn the shell. Two function calls in [pty.rs](src/rushx_term/pty.rs) handle the whole sequence:
+The terminal emulator's first action is to set up the PTY pair and spawn the shell. Two function calls in [pty.rs](src/rushx_term/pty.rs) handle the whole sequence.
 
-```rust
-    let pty_pair = pty::open_pty_pair().expect("Failed to allocate PTY pair");
-    let shell    = pty::spawn_shell(pty_pair).expect("Failed to spawn shell process");
-```
+**open_pty_pair()** calls **openpty(3)** through the nix crate to allocate a master/slave pair. It returns a struct holding the two raw file descriptors: one for the emulator (master) and one for the child (slave). No termios configuration is applied; the PTY uses kernel defaults.
 
-`open_pty_pair()` calls _**openpty(3)**_ through the `nix` crate (internally performs **_posix_openpt_** + **_grantpt_** + **_unlockpt_** + **_ptsname_**). It returns a <ins>**PtyPair**</ins> struct holding two raw file descriptors: `master` (retained by the emulator) and `slave` (passed to the child). No termios configuration is applied; the PTY uses kernel defaults.
-
-**`spawn_shell()`** consumes the <ins>**PtyPair**</ins> and performs the full POSIX session establishment ceremony described in [Section 2.2](#22-single-binary-self-re-exec-model).
+**spawn_shell()** consumes that pair and performs the full POSIX session establishment ceremony described in [Section 2.2](#22-single-binary-self-re-exec-model): fork, setsid, ioctl for controlling terminal, dup2 onto standard fds, and execvp to re-launch the binary in shell mode.
 
 ### 3.2 PTY File Descriptor Topology
 
@@ -287,23 +280,21 @@ _**Figure 4**: PTY file descriptor topology. Green arrows: shell input path (key
 
 </div>
 
-Figure 4 shows the fd layout after `spawn_shell()` completes and both processes have closed the fds they do not own.
+Figure 4 shows the fd layout after shell spawning completes and both processes have closed the fds they do not own.
 
-The **Terminal Emulator Process** (parent). It holds a single fd: the **PTY master**. This is the only handle the emulator uses for all communication with the shell. Bytes written to the master appear on the shell's stdin; bytes the shell writes to stdout or stderr are readable from the master.
+The **Terminal Emulator Process** (parent) holds a single fd: the **PTY master**. This is its only handle for all communication with the shell. Bytes written to the master appear on the shell's stdin; bytes the shell writes to stdout or stderr become readable from the master.
 
-The **Kernel PTY layer** connects the two sides. The kernel's line discipline sits between master and slave, handling echo, line buffering, and signal generation (Ctrl-C, Ctrl-Z) transparently. Neither the emulator nor the shell manages these behaviors manually.
+The **Kernel PTY layer** connects the two sides. The line discipline sits between master and slave, handling echo, line buffering, and signal generation (Ctrl-C, Ctrl-Z) transparently. Neither the emulator nor the shell manages these behaviors manually.
 
-Finally, we have the **Shell Process** (child). After the `dup2` calls in **_spawn_shell()_**, the PTY slave fd has been duplicated onto three standard file descriptors:
+The **Shell Process** (child) sees three standard file descriptors, all pointing to the same PTY slave device:
 
-- **fd 0** (stdin) : The shell reads user input from here.
-- **fd 1** (stdout) : Builtin output and external command output goes here.
-- **fd 2** (stderr) : Error messages go here.
+- **fd 0** (stdin) : reads user input.
+- **fd 1** (stdout) : builtin and command output.
+- **fd 2** (stderr) : error messages.
 
-All three point to the same underlying PTY slave device. The original slave fd is closed after duplication (assuming it was > 2), so the shell's fd table contains exactly fds 0, 1, and 2.
+Keystrokes captured by the GTK keyboard handler are written to the master fd, pass through the kernel, and arrive at the shell's fd 0. In the other direction, bytes written to fd 1 or fd 2 travel back through the slave, through the kernel, and become readable on the master fd, where the emulator's reader thread picks them up for rendering.
 
-Keystrokes captured by the GTK keyboard handler are written to the master fd, pass through the kernel, and arrive at the shell's fd 0. For the shell's output, bytes written by the shell or its child programs to fd 1 or fd 2 travel back through the slave, through the kernel, and become readable on the master fd, where the emulator's reader thread picks them up for rendering.
-
-This two-fd-endpoint topology (one master fd in the parent, three slave-backed fds in the child) is the standard POSIX PTY pattern. RushX does not deviate from it.
+This is the standard POSIX PTY pattern. RushX does not deviate from it.
 
 ### 3.3 Terminal I/O Pipeline
 
@@ -329,89 +320,57 @@ The five subsections below walk through each emulator-side component in detail.
 
 #### 3.3.1 Reader Thread
 
-`spawn_reader_thread()` creates a standard mpsc channel, then spawns a background thread that loops indefinitely, calling **read()** on the PTY master fd into a 4096-byte stack buffer. Each successful read copies the live portion of the buffer into a byte vector and sends it through the channel.
+A dedicated background thread sits in a blocking read loop on the PTY master fd, reading into a 4096-byte stack buffer. Each successful read is copied into a byte vector and sent through a standard mpsc channel to the GTK main thread.
 
-The thread terminates on any of three conditions: **read()** returns 0 (EOF, the shell closed stdout), **read()** returns EIO (the slave side of the PTY was closed), or the channel receiver has been dropped (the GTK side shut down). In all cases the thread exits silently, which disconnects the sending half of the channel and signals the poll timer to close the window.
-
-The function returns the receiving end of the channel to **build_ui**, which hands it off to the poll timer.
+The thread terminates when the read returns EOF (shell closed stdout), EIO (slave side closed), or the channel receiver has been dropped (GTK shut down). In all cases the thread exits silently, disconnecting the channel and signaling the poll timer to close the window.
 
 #### 3.3.2 Poll Timer
 
-`setup_poll_timer()` registers a GLib timeout on the GTK main loop running every **16 ms** (roughly 60 fps). Each tick executes a tight **try_recv** loop that drains every pending message from the reader thread's channel without blocking.
+A GLib timeout fires every **16 ms** (roughly 60 fps) on the GTK main loop. Each tick drains all pending messages from the reader thread's channel without blocking.
 
-For each received byte chunk, the timer calls **process_pty_output()** to interpret the raw bytes and append the results to the shared text buffer. If at least one chunk arrived during the tick, the timer resets cursor visibility to true (interrupting any ongoing blink) and calls **queue_draw()** on the DrawingArea to schedule a Cairo repaint.
+For each byte chunk received, the timer feeds it through the output processing state machine and appends the results to the shared text buffer. If anything arrived, it resets the cursor to visible (interrupting any ongoing blink) and schedules a Cairo repaint.
 
-When **try_recv** returns Disconnected, the shell has exited and the reader thread has terminated. The timer responds by closing the application window, which causes GTK to quit.
+When the channel disconnects (shell exited, reader thread gone), the timer closes the application window, which causes GTK to quit.
 
 #### 3.3.3 PTY Output Processing
 
-`process_pty_output()` is the byte-level state machine that sits between raw PTY data and the text buffer. It converts the incoming bytes to a string via lossy UTF-8 decoding, then iterates character by character with a peekable iterator.
+The state machine that sits between raw PTY data and the text buffer. It decodes the incoming bytes as UTF-8 (lossy), then walks character by character, applying these rules in priority order:
 
-The rules it applies, in order of matching priority:
+- **Backspace** (0x08): removes the last character on the current line.
+- **\r\n**: consumed as a single newline.
+- **Standalone \r**: truncates back to the start of the current line (handles progress bars and overwrite-style output).
+- **CSI sequences** (ESC + [): consumes all parameter bytes until the final byte. Only "Erase in Display" (clear screen / clear scrollback) is acted upon; all other CSI sequences are silently stripped.
+- **OSC sequences** (ESC + ]): consumed and discarded (terminal title changes, etc.).
+- **BEL and NUL**: silently ignored.
+- **Everything else**: appended verbatim.
 
-- **`\x08`** (Backspace): pops the last character from the buffer, unless the buffer is empty or the last character is a newline.
-- **`\r\n`**: consumed as a single newline (peek ahead to detect the pair).
-- **`\r`** alone (standalone carriage return): truncates the buffer back to the start of the current line, or clears entirely if there is no newline. This handles progress bars and overwrite-style output.
-- **`\x1b[`** (CSI sequence): consumes all parameter bytes until a final byte in the @..~ range. Currently only `\x1b[2J` and `\x1b[3J` (Erase in Display) are acted upon, both of which clear the buffer. All other CSI sequences are silently stripped.
-- **`\x1b]`** (OSC sequence): consumes everything until BEL (`\x07`) or ST (`\x1b\\`). Used by shells to set the terminal title; RushX discards the payload.
-- **`\x07`** (BEL), **`\x00`** (NUL): silently ignored.
-- **Everything else**: appended to the buffer verbatim.
-
-The function modifies the buffer in place. No allocations occur per character; only push and truncate operations on the existing string.
+The function modifies the buffer in place with no per-character allocations.
 
 #### 3.3.4 Rendering
 
-`setup_draw_func()` installs a Cairo draw callback on the GTK DrawingArea. Every time **queue_draw()** is called (by the poll timer or the blink timer), GTK invokes this callback with a Cairo context and the current widget dimensions.
+A Cairo draw callback is installed on the GTK DrawingArea. Every time a repaint is triggered (by the poll timer or the blink timer), it executes three passes:
 
-The rendering proceeds in three passes:
+1. **Background fill** with a dark blue-gray (#1e1e2e).
+2. **Text** in monospace at 14pt, light gray (#cdd6f4). The buffer is split on newlines, and only the last N lines that fit the window height are drawn (auto-scroll to bottom).
+3. **Block cursor** at the end of the last visible line, one character wide.
 
-1. **Background fill.** The entire widget area is filled with the background color (#1e1e2e, a dark blue-gray).
-
-2. **Text.** The callback selects a monospace font at size 14.0 via Cairo's toy text API, sets the foreground to #cdd6f4 (light gray), and splits the text buffer on newlines. It computes how many lines fit the window height, then takes the last N lines (auto-scroll to bottom). Each visible line is drawn with y incrementing by LINE_HEIGHT (18.0 px).
-
-3. **Cursor.** If the cursor is visible, a filled rectangle is drawn at the end of the last visible line. The x position is computed from the text extents of that line, and the height from the font's ascent + descent. The result is a block cursor one "M"-width wide.
-
-A separate **blink timer** (setup_blink_timer) toggles cursor visibility every 500 ms and calls **queue_draw()**, producing the standard blinking block cursor. The poll timer resets visibility to true whenever new output arrives, so the cursor stays solid while the shell is actively printing.
+A separate **blink timer** toggles cursor visibility every 500 ms. The poll timer resets it to visible whenever new output arrives, so the cursor stays solid while the shell is actively printing.
 
 #### 3.3.5 Keyboard Input
 
-`setup_keyboard()` attaches a GTK EventControllerKey to the DrawingArea. On every key-press event, the handler translates the keyval and modifier state into a byte sequence and writes it directly to the PTY master fd via **write()**.
+A GTK key event controller is attached to the DrawingArea. On every key press, it translates the key into a byte sequence and writes it to the PTY master fd.
 
-The translation table:
+The mapping follows standard terminal conventions: Enter sends a carriage return, Backspace sends DEL (0x7F), arrow keys send ANSI escape sequences (ESC [ A/B/C/D), Ctrl+letter sends the corresponding control character (0x01 through 0x1A), and printable characters are encoded as UTF-8.
 
-| Input                          | Bytes written to PTY                                    |
-| ------------------------------ | ------------------------------------------------------- |
-| Ctrl + letter                  | Control character `0x01`..`0x1A` (e.g. Ctrl+C = `0x03`) |
-| Enter                          | `\r`                                                    |
-| Backspace                      | `\x7f` (DEL)                                            |
-| Tab                            | `\t`                                                    |
-| Escape                         | `\x1b`                                                  |
-| Arrow Up / Down / Right / Left | `\x1b[A` / `\x1b[B` / `\x1b[C` / `\x1b[D`               |
-| Delete                         | `\x1b[3~`                                               |
-| Home / End                     | `\x1b[H` / `\x1b[F`                                     |
-| Printable characters           | UTF-8 encoded bytes (up to 4 bytes per codepoint)       |
-
-Ctrl+letter combinations are checked first: if the CONTROL_MASK modifier is active and the keyval maps to an ASCII letter, the handler computes (lowercase - 'a' + 1) to produce the corresponding control byte and returns immediately. Otherwise, named keys are matched against their GDK key variants, and printable characters fall through to Unicode conversion and UTF-8 encoding.
-
-All writes go to the same master fd that the reader thread reads from on the other side. The kernel PTY layer echoes the bytes back through the slave if the line discipline has echo enabled, so typed characters appear on screen through the normal output path (reader thread to poll timer to renderer), not by direct insertion into the text buffer.
+All writes go to the same master fd that the reader thread reads from on the other side. The kernel PTY layer echoes the bytes back through the slave if the line discipline has echo enabled, so typed characters appear on screen through the normal output path, not by direct insertion into the text buffer.
 
 ### 3.4 Configuration
 
 All tunable parameters live in a single file: [config.rs](./src/rushx_term/config.rs). Nothing is read from disk or environment variables at runtime; every value is a compile-time constant.
 
-The constants break into five groups:
+The constants cover application identity (GTK/D-Bus ID, window title), window geometry (800 x 500 default), color scheme (dark blue-gray background #1e1e2e, light gray text #cdd6f4), font and text layout (monospace at 14pt, 18 px line height, 4 px padding), and shell invocation (/proc/self/exe path, --rushx-shell flag, 4096-byte read buffer).
 
-1. **Application identity.** APP_ID ("haikaw.rushx.terminal") is the GTK/D-Bus application identifier. WINDOW_TITLE ("RushX") is the string shown in the title bar.
-
-2. **Window geometry.** WINDOW_WIDTH (800) and WINDOW_HEIGHT (500) set the default window size in pixels.
-
-3. **Color scheme.** BG_COLOR is a dark blue-gray (#1e1e2e) and FG_COLOR is a light gray (#cdd6f4), both stored as (f64, f64, f64) RGB triples normalized to 0.0..1.0 for Cairo.
-
-4. **Font and text layout.** FONT_FAMILY is "monospace", rendered through Cairo's toy text API. FONT_SIZE is 14.0 (Cairo units, roughly points at 96 DPI). LINE_HEIGHT is 18.0 px (baseline to baseline). TEXT_PADDING is 4.0 px from the window edge.
-
-5. **Shell invocation.** SHELL_PATH is "/proc/self/exe" and SHELL_FLAG is "--rushx-shell". These two constants control the self-re-exec mechanism described in [Section 2.2](#22-single-binary-self-re-exec-model). PTY_READ_BUF_SIZE is 4096 bytes, the stack buffer size used by the reader thread.
-
-Because everything is const, changing any value requires recompilation. There is no runtime configuration file, no CLI flag parsing beyond the single --rushx-shell switch, and no theming support yet.
+Because everything is const, changing any value requires recompilation. There is no runtime configuration file, no CLI flags beyond the single --rushx-shell switch, and no theming support yet.
 
 <br />
 
@@ -431,41 +390,90 @@ _**Figure 6**: Shell REPL dispatch flowchart. Diamonds: branch conditions. Round
 
 </div>
 
-<!-- TODO -->
+Figure 6 traces the shell's main loop. The cycle begins at the top with the prompt ("$ "), flows down through line reading, tokenization, and a branch: is the command a builtin or an external program? Each path leads to execution, then loops back to the prompt. The red exit paths show the two ways the loop terminates: the user types "exit", or stdin hits EOF.
+
+The REPL lives in **run_rushx_shell()** in [mod.rs](./src/rushx_shell/mod.rs). Each iteration prints the prompt, flushes stdout, reads a line from stdin, and passes it through the tokenizer and redirection parser. If the first token matches a builtin name, the shell handles it inline. Otherwise, control passes to the external execution engine. The loop repeats until the "exit" builtin is invoked or the read fails (EOF / broken pipe).
+
+The shell maintains a single piece of persistent state across iterations: the previous working directory (**OLDPWD**), used by "cd -" to jump back.
 
 ### 4.2 Parsing
 
 #### 4.2.1 Argument Tokenization
 
-<!-- TODO -->
+The tokenizer in [parse.rs](./src/rushx_shell/parser/parse.rs) splits a raw input line into an argument vector, respecting POSIX-style quoting rules.
+
+It walks the input character by character, tracking whether it is currently inside single quotes, double quotes, or unquoted context. **Single quotes** preserve everything literally with no escape processing. **Double quotes** allow backslash escapes for a small set of characters (backslash itself, double quote, dollar sign, backtick, and newline). **Unquoted backslash** escapes the immediately following character. Whitespace outside quotes delimits arguments.
+
+The result is a flat vector of strings, one per argument. No variable expansion, glob expansion, or tilde expansion happens at this stage; those modules are scaffolded but not yet implemented.
 
 #### 4.2.2 Redirection Parsing
 
-<!-- TODO -->
+After tokenization, the argument vector is scanned for redirection operators. The parser recognizes six forms:
+
+- **>** and **1>** : redirect stdout to a file (truncate)
+- **>>** and **1>>** : redirect stdout to a file (append)
+- **2>** : redirect stderr to a file (truncate)
+- **2>>** : redirect stderr to a file (append)
+
+Each operator consumes the next token as the target filename. The parser separates redirection instructions from command arguments and returns a structured result containing the clean argument list, an optional stdout redirection, and an optional stderr redirection.
+
+Input redirection (< ) and pipe operators ( | ) are not yet supported.
 
 ### 4.3 Builtin Commands
 
-<!-- TODO -->
+The shell recognizes five builtin commands, dispatched inline in the REPL loop without forking a child process:
+
+- **exit** : terminates the shell loop immediately.
+- **echo** : prints its arguments joined by spaces, followed by a newline. With no arguments, prints a blank line.
+- **type** : reports whether a command is a builtin or an external program. For externals, prints the resolved path. If the command is not found, says so.
+- **pwd** : prints the current working directory.
+- **cd** : changes the working directory. Supports "~" (home), "~/subdir" (home-relative), "-" (previous directory via OLDPWD), and absolute or relative paths. Prints an error if the target does not exist or is not a directory.
+
+All builtins write to the redirected output if a redirection is active, rather than always writing to the real stdout/stderr. This is handled by passing a writer object (either a file or the standard stream) into each builtin.
 
 ### 4.4 External Command Execution
 
 #### 4.4.1 PATH Resolution
 
-<!-- TODO -->
+When a command is not a builtin, the shell searches the PATH environment variable for a matching executable. It splits PATH on the platform separator, joins the command name to each directory, and checks whether the resulting path points to a regular file with at least one execute permission bit set (owner, group, or other).
+
+The first match wins. If no match is found, the shell prints "command not found" and returns to the prompt without forking.
 
 #### 4.4.2 Fork/Exec Lifecycle
 
-<!-- TODO -->
+Once a valid executable path is resolved, the shell forks a child process. The child applies any active redirections (opening the target file and using dup2 to replace the standard fd), then calls **execvp** to overlay itself with the target program. The parent blocks on **waitpid** until the child terminates, collects the exit status, and returns to the prompt.
+
+If the child exits with a non-zero status and stderr is not redirected, the shell prints the exit code. If fork itself fails, an error is printed and the loop continues.
+
+All string arguments are converted to null-terminated C strings before the fork, since allocating after fork is unsafe in a multithreaded process (same principle as the terminal emulator's spawn_shell ceremony in [Section 2.2](#22-single-binary-self-re-exec-model)).
 
 ### 4.5 I/O Redirection Mechanism
 
-<!-- TODO -->
+Redirection is handled at two levels depending on whether the command is a builtin or an external.
+
+For **builtins**, the REPL loop opens the target file (in truncate or append mode as specified) and wraps it in a generic writer. The builtin writes to that writer instead of stdout or stderr. This happens entirely in the parent process with no forking.
+
+For **external commands**, redirection is applied in the child process after fork but before exec. The child opens the target file with the appropriate flags (O_WRONLY | O_CREAT, plus O_TRUNC or O_APPEND), calls dup2 to replace fd 1 (stdout) or fd 2 (stderr) with the opened file descriptor, then closes the original fd. When exec replaces the child's memory, the new program inherits the redirected file descriptors and writes to the file without knowing it.
+
+Both paths support independent stdout and stderr redirection in the same command.
 
 ---
 
 ## 5. POSIX Compliance & Syscall Interface
 
-<!-- TODO -->
+RushX interfaces with the Linux kernel through two crates: **nix** (0.26) for safe Rust wrappers around POSIX syscalls, and **libc** (0.2) for raw FFI where no safe wrapper exists.
+
+The syscalls used, grouped by subsystem:
+
+**PTY allocation and session setup** (rushx_term): openpty to create the master/slave pair, fork to split into parent and child, setsid to create a new session, ioctl with TIOCSCTTY to assign the controlling terminal (raw libc, no nix wrapper), dup2 to wire fds 0/1/2 to the slave, and execvp to re-exec the binary in shell mode.
+
+**Process lifecycle** (rushx_shell): fork to create a child for each external command, execvp to overlay the child with the target program, waitpid to block until the child exits and collect its status, and open + dup2 + close for fd redirection in the child before exec.
+
+**I/O** (rushx_term): read on the master fd in the reader thread, write on the master fd from the keyboard handler. Both go through nix wrappers.
+
+No signals are currently handled explicitly. The kernel's default SIGCHLD behavior (via waitpid) and the PTY line discipline's signal generation (Ctrl-C sends SIGINT to the foreground process group) are relied upon, but the shell does not install custom signal handlers. This is a known gap.
+
+The shell's quoting rules (single quotes literal, double quotes with limited escapes, unquoted backslash) follow POSIX shell grammar conventions, though the implementation is a hand-written character walker rather than a formal grammar parser.
 
 ---
 
@@ -473,25 +481,72 @@ _**Figure 6**: Shell REPL dispatch flowchart. Diamonds: branch conditions. Round
 
 ### 6.1 Implementation Status Matrix
 
-<!-- TODO -->
+| Component                                             | Status      | Notes                                                           |
+| ----------------------------------------------------- | ----------- | --------------------------------------------------------------- |
+| PTY allocation (openpty)                              | Done        | Via nix crate                                                   |
+| Session establishment (fork/setsid/ioctl/dup2/execvp) | Done        | Full POSIX ceremony                                             |
+| Self-re-exec launcher                                 | Done        | /proc/self/exe + --rushx-shell                                  |
+| GTK4 window + DrawingArea                             | Done        | Cairo toy text API rendering                                    |
+| Reader thread + mpsc channel                          | Done        | 4096-byte buffer, blocking read                                 |
+| Poll timer (16 ms)                                    | Done        | Drains channel, triggers redraw                                 |
+| PTY output state machine                              | Partial     | CSI stripped but not interpreted (no color, no cursor movement) |
+| Cursor rendering + blink                              | Done        | Block cursor, 500 ms blink                                      |
+| Keyboard input + ANSI escapes                         | Done        | Ctrl, arrows, Delete, Home/End, UTF-8                           |
+| REPL loop                                             | Done        | Prompt, read, dispatch                                          |
+| Argument tokenizer                                    | Done        | POSIX-style single/double quote handling                        |
+| Redirection parser                                    | Done        | >, >>, 1>, 1>>, 2>, 2>>                                         |
+| Builtin commands                                      | Done        | exit, echo, type, pwd, cd                                       |
+| External command execution                            | Done        | fork/execvp/waitpid                                             |
+| PATH resolution                                       | Done        | Search + execute-bit check                                      |
+| Lexer (token stream)                                  | Stub        | lexer.rs exists but is empty                                    |
+| AST                                                   | Stub        | ast.rs exists but is empty                                      |
+| Variable/tilde expansion                              | Stub        | expand/vars.rs empty                                            |
+| Glob expansion                                        | Stub        | expand/glob.rs empty                                            |
+| Pipeline ( \| )                                       | Not started |                                                                 |
+| Input redirection ( < )                               | Not started |                                                                 |
+| Job control (bg/fg/jobs)                              | Not started |                                                                 |
+| Signal handling (SIGINT/SIGTSTP)                      | Not started | Relies on kernel defaults                                       |
+| Scrollback buffer                                     | Not started | Only visible lines are kept                                     |
+| ANSI color support                                    | Not started | CSI color codes are stripped                                    |
+| Termios configuration                                 | Not started | PTY uses kernel defaults                                        |
+| Runtime config file                                   | Not started | All values are compile-time consts                              |
 
 ### 6.2 Known Limitations
 
-<!-- TODO -->
+- **No ANSI color or cursor movement.** CSI sequences are stripped rather than interpreted. Programs that rely on colors or cursor positioning (vim, htop, less) will not render correctly.
+- **No scrollback.** The text buffer grows unbounded in memory but there is no scroll mechanism; only the last N lines that fit the window are visible.
+- **No signal handling.** The shell does not install handlers for SIGINT, SIGTSTP, or SIGCHLD. Ctrl-C and Ctrl-Z work through the kernel's line discipline, but the shell cannot trap or forward signals to job groups.
+- **No pipelines or input redirection.** Only output redirection (> and >>) is implemented. Pipes and < are not parsed.
+- **No variable or glob expansion.** $VAR, ~, and wildcard patterns are passed through as literal strings.
+- **Child process safety.** The child path after fork uses .expect() in several places (dup2, open, execvp). A panic in the child would run Rust unwinding in a forked address space, which is undefined behavior. These should be replaced with raw \_exit(1) on failure.
+- **Zombie risk.** External commands are reaped via waitpid in the parent, but if the shell is interrupted between fork and waitpid, the child becomes a zombie. No SIGCHLD handler exists to catch this.
+- **Linux only.** The binary depends on /proc/self/exe, TIOCSCTTY, and glibc's openpty. It will not compile or run on macOS, BSDs, or Windows.
 
 ### 6.3 Roadmap
 
-<!-- TODO -->
+Near-term priorities:
+
+1. Implement the lexer (proper token stream with position tracking) to replace the hand-written character walker.
+2. Build an AST layer so the parser can represent pipelines, conditionals, and compound commands.
+3. Add pipeline support ( | ) with pipe(2) between child processes.
+4. Implement variable expansion ($VAR, $?, $$) and tilde expansion.
+5. Add basic ANSI color support in the PTY output state machine (SGR sequences).
+6. Install signal handlers for SIGINT and SIGTSTP in the shell, and forward them correctly to foreground process groups.
+
+Longer-term goals:
+
+- Glob expansion (\*, ?, [abc]).
+- Input redirection ( < ) and here-documents ( << ).
+- Job control (bg, fg, jobs, Ctrl-Z suspend/resume).
+- Scrollback buffer with keyboard scrolling.
+- Runtime configuration file for colors, font, keybindings.
+- History and line editing.
 
 ---
 
-## 7. Building & Installation
+## 7. Installation & Building
 
-### 7.1 Build from Source
-
-<!-- TODO -->
-
-### 7.2 Install via APT
+### 7.1 Install via APT
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/The-HaiKaw-Pr0tocol/rushx/main/install.sh | sudo bash
@@ -499,14 +554,42 @@ curl -fsSL https://raw.githubusercontent.com/The-HaiKaw-Pr0tocol/rushx/main/inst
 sudo apt-get install -y rushx
 ```
 
+### 7.2 Build from Source
+
+Requires a Linux system with Rust (edition 2024) and GTK4 development headers installed.
+
+```bash
+#- Install GTK4 development dependencies (Debian/Ubuntu) -#
+sudo apt-get install -y libgtk-4-dev build-essential
+
+# Clone and build
+git clone https://github.com/The-HaiKaw-Pr0tocol/rushx.git
+cd rushx
+cargo build --release
+
+# Run
+./target/release/rushx
+```
+
+The binary is fully self-contained. No additional runtime files are needed.
+
+
 ---
 
 ## 8. License
 
-<!-- TODO -->
+RushX is licensed under the **GNU General Public License v3.0 or later** (GPL-3.0-or-later).
+
+Copyright 2025-2026 The HaiKaw Pr0tocol (Haitam Bidiouane, Kawtar Taik) and RushX contributors.
+
+You are free to redistribute and modify this software under the terms of the GPL. See the [debian/copyright](./debian/copyright) file for the full license text.
 
 ---
 
 ## 9. References
 
-<!-- TODO -->
+1. Cefboud. _Exploring Terminals, TTYs, and PTYs_. [https://cefboud.com/posts/terminals-pty-tty-pyte/](https://cefboud.com/posts/terminals-pty-tty-pyte/)
+
+2. _UNIX Like Shells_ (video). [https://www.youtube.com/watch?v=ubt-UjcQUYg](https://www.youtube.com/watch?v=ubt-UjcQUYg)
+
+3. Funinkina. _Terminal Emulators Under the Hood_. [https://funinkina.is-a.dev/blog/terminal-emulators-under-the-hood](https://funinkina.is-a.dev/blog/terminal-emulators-under-the-hood)
