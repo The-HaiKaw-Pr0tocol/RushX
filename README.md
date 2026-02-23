@@ -4,7 +4,7 @@
 
 RushX (Rust Shell - eXtended) is a POSIX-compliant Linux <ins>**terminal emulator**</ins> & <ins>**shell**</ins> implemented in Rust. It ships as a single binary: A GTK4-based terminal emulator that allocates a pseudoterminal (PTY) and renders output via Cairo, and calls by default an interactive POSIX-style shell that performs tokenization, redirection parsing, builtin dispatch, and `fork(2)`/`execvp(3)` execution of external commands.
 
-RushX interfaces directly with the Linux kernel for process creation, session management, and controlling terminal assignment. No external libraries handle PTY allocation, signal delivery, or process lifecycle. The <ins>**_nix_**</ins> crate provides safe Rust wrappers around the main syscalls (**_openpty(3)_**, **_fork(2)_**, **_setsid(2)_**, **_dup2(2)_**, **_execvp(3)_**, and **_waitpid(2)_**), while raw <ins>**_libc::ioctl_**</ins> is used for `TIOCSCTTY` where no safe wrapper exists.
+RushX interfaces directly with the Linux kernel for process creation, session management, and controlling terminal assignment. No external libraries handle PTY allocation, signal delivery, or process lifecycle, and the <ins>**_nix_**</ins> crate provides safe Rust wrappers around the main syscalls, while raw <ins>**_libc::ioctl_**</ins> is used where no safe wrapper exists.
 
 > Developed & Maintained by [The HaiKaw Pr0tocol](https://github.com/The-HaiKaw-Pr0tocol) organization.
 
@@ -108,13 +108,19 @@ RushX interfaces directly with the Linux kernel for process creation, session ma
 
 <div align="center">
 
-_The general architecture of a terminal emulator: User input flows through the emulator into the PTY master, the kernel relays it to the slave side where the shell reads it, and output travels back the same path for rendering. Source: [Terminal Emulators Under the Hood](https://funinkina.is-a.dev/blog/terminal-emulators-under-the-hood/)._
+_How classic terminals input/output flows: from the physical terminal over UART into the kernel’s TTY stack (driver + line discipline), and then to user processes. Source: [Terminal Emulators Under the Hood](https://funinkina.is-a.dev/blog/terminal-emulators-under-the-hood/)._
 
 </div>
 
-Most terminal emulators delegate shell functionality to external shell programs, like `/bin/bash` or `/bin/sh`, treating the shell as an opaque subprocess. Most shells, conversely, assume they run inside an existing terminal and never concern themselves with PTY allocation, screen rendering, or keyboard translation.
+Early UNIX systems used **physical terminals** connected over serial lines. The kernel exposed them through the **TTY subsystem**, giving programs a uniform byte-stream interface.
 
-RushX merges both roles into a <ins>**single binary**</ins>. One process handles every layer of the stack: `openpty(3)` allocation, `setsid(2)` session creation, byte-level I/O over the PTY master/slave pair, `fork(2)`/`execvp(3)` process overlay, and `waitpid(2)` child reaping.
+As hardware terminals disappeared, <ins>**terminal emulators**</ins> is what replaced them, and to preserve the TTY abstraction, UNIX introduced **pseudoterminals (PTYs)**: the emulator talks to the _PTY master process_, while shells and programs attach to the _slave side_ as if it were a **real terminal**.
+
+---
+
+Now mosst terminal emulators treat the shell as an opaque subprocess, while shells assume an existing terminal. This creates a strict split: terminal emulator ↔ PTY ↔ shell.
+
+**RushX collapses this split into a single binary.** One process owns PTY setup, session creation, byte-level I/O, `fork`/`exec`, and child reaping, merging terminal and shell into one program.
 
 ---
 
