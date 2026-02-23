@@ -291,7 +291,12 @@ fn setup_poll_timer(
         loop {
             match rx.try_recv() {
                 Ok(data) => {
-                    process_pty_output(&mut buf_for_rx.borrow_mut(), &data);
+                    let bell = process_pty_output(&mut buf_for_rx.borrow_mut(), &data);
+                    if bell {
+                        if let Some(display) = gdk::Display::default() {
+                            display.beep();
+                        }
+                    }
                     needs_redraw = true;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -443,6 +448,9 @@ fn setup_keyboard(drawing_area: &DrawingArea, master_fd: RawFd) -> () {
 /// - `buffer`: Mutable reference to the accumulated terminal text
 /// - `data`: Raw bytes read from the PTY master fd
 ///
+/// ### Returns
+/// `true` if a BEL character (`\x07`) was encountered (caller should ring the bell).
+///
 /// ### Behavior
 /// Processes each character sequentially, handling:
 /// - `\x08` (BS): Erases the last character on the current line
@@ -450,10 +458,12 @@ fn setup_keyboard(drawing_area: &DrawingArea, master_fd: RawFd) -> () {
 /// - `\r` alone: Truncates back to the start of the current line (carriage return)
 /// - `\x1b[…`: Strips CSI escape sequences (cursor movement, colors, etc.)
 /// - `\x1b]…`: Strips OSC escape sequences (e.g. terminal title changes)
-/// - `\x07` (BEL), `\x00` (NUL): Silently ignored
+/// - `\x07` (BEL): Signals the caller to ring the terminal bell
+/// - `\x00` (NUL): Silently ignored
 /// - All other characters: Appended to the buffer verbatim
 ///
-fn process_pty_output(buffer: &mut String, data: &[u8]) {
+fn process_pty_output(buffer: &mut String, data: &[u8]) -> bool {
+    let mut bell = false;
     let text = String::from_utf8_lossy(data);
     let mut chars = text.chars().peekable();
 
@@ -532,12 +542,16 @@ fn process_pty_output(buffer: &mut String, data: &[u8]) {
                     _ => {}
                 }
             }
-            //-- Bell, null: ignore --//
-            '\x07' | '\x00' => {}
+            //-- Bell: signal caller --//
+            '\x07' => { bell = true; }
+            //-- Null: ignore --//
+            '\x00' => {}
             //-- Everything else: append --//
             _ => {
                 buffer.push(ch);
             }
         }
     }
+
+    bell
 }
