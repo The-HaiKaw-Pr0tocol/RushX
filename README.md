@@ -75,7 +75,6 @@ RushX interfaces directly with the Linux kernel for process creation, session ma
 - [2. Architecture](#2-architecture)
   - [2.1 Modular Decomposition](#21-modular-decomposition)
   - [2.2 Single-Binary Self-Re-Exec Model](#22-single-binary-self-re-exec-model)
-  - [2.3 Technology Stack](#23-technology-stack)
 - [3. Terminal Emulator (`rushx_term`)](#3-terminal-emulator-rushx_term)
   - [3.1 PTY Allocation & Session Establishment](#31-pty-allocation--session-establishment)
   - [3.2 PTY File Descriptor Topology](#32-pty-file-descriptor-topology)
