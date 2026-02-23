@@ -69,12 +69,6 @@ RushX interfaces directly with the Linux kernel for process creation, session ma
 
 ---
 
-## Abstract
-
-This document describes the architecture and implementation of RushX, a combined terminal emulator and shell written in Rust. RushX is structured as three modules: `rushx_launcher` (CLI dispatch), `rushx_term` (GTK4 terminal emulator with integrated PTY backend), and `rushx_shell` (interactive REPL with tokenizer, redirection parser, builtin commands, and a `fork`/`execvp` execution engine). The terminal emulator spawns the shell via a self-re-exec pattern over a pseudoterminal pair, establishing a POSIX session with proper controlling terminal assignment. Bidirectional I/O between the emulator and the shell flows through the PTY master/slave file descriptors, bridged to the GTK rendering loop via a dedicated reader thread and an `mpsc` channel. This paper documents each subsystem at the syscall level, catalogs the current implementation status, and defines the roadmap toward full POSIX shell compliance.
-
----
-
 ## Table of Contents
 
 - [1. Introduction & Motivation](#1-introduction--motivation)
