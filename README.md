@@ -229,7 +229,7 @@ The parent process (terminal emulator) begins by calling **openpty(3)** to alloc
 
 The parent then calls **fork(2)**. From this point, two processes exist with identical memory.
 
-**Child path (right swimlane):**
+**<ins>Child path (right swimlane)</ins>:**
 
 1. Close the master fd. The child has no use for it.
 2. ***setsid(2)*** to create a new session. The child becomes session leader, detached from the parent's controlling terminal.
@@ -240,7 +240,7 @@ The parent then calls **fork(2)**. From this point, two processes exist with ide
 
 If ***execvp*** fails, the child calls ***libc::_exit(1)*** directly to avoid running Rust destructors or ***atexit*** handlers in the forked address space.
 
-**Parent path (left swimlane):**
+**<ins>Parent path (left swimlane):</ins>**
 
 1. Close the slave fd. Only the child uses it.
 2. Return `SpawnedShell { master_fd, child_pid }` to the terminal emulator, which uses ***master_fd*** for all subsequent I/O and ***child_pid*** for lifecycle management.
@@ -248,8 +248,6 @@ If ***execvp*** fails, the child calls ***libc::_exit(1)*** directly to avoid ru
 The key insight is that `/proc/self/exe` always points to the currently running binary. The child does not spawn an external shell; it re-executes itself. The flag in ***argv*** is the only thing that distinguishes a terminal emulator process from a shell process.
 
 <br />
-
----
 
 ## 3. Terminal Emulator (`rushx_term`)
 
