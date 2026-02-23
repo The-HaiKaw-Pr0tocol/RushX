@@ -103,10 +103,9 @@ RushX interfaces directly with the Linux kernel for process creation, session ma
 
 ---
 
-- [7. Installation & Building](#7-installation--building)
-  - [7.1 Install via APT](#72-install-via-apt)
-  - [7.2 Build from Source](#71-build-from-source)
-- [8. References](#9-references)
+- [7. Installation via APT](#7-installation-via-apt)
+
+- [8. References](#8-references)
 
 <br />
 
@@ -546,36 +545,13 @@ Longer-term goals:
 
 ---
 
-## 7. Installation & Building
-
-### 7.1 Install via APT
+## 7. Installation via APT
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/The-HaiKaw-Pr0tocol/rushx/main/install.sh | sudo bash
 
 sudo apt-get install -y rushx
 ```
-
-### 7.2 Build from Source
-
-Requires a Linux system with Rust (edition 2024) and GTK4 development headers installed.
-
-```bash
-#- Install GTK4 development dependencies (Debian/Ubuntu) -#
-sudo apt-get install -y libgtk-4-dev build-essential
-
-#- Clone and build -#
-git clone https://github.com/The-HaiKaw-Pr0tocol/rushx.git
-cd rushx
-cargo build --release
-
-#- Run -#
-./target/release/rushx
-```
-
-The binary is fully self-contained. No additional runtime files are needed.
-
----
 
 ## 8. References
 
