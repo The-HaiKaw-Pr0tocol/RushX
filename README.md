@@ -218,6 +218,8 @@ _**Figure 3**: Self-re-exec bootstrapping sequence. Left swimlane: parent proces
 
 </div>
 
+<br />
+
 Figure 3 traces the bootstrapping sequence step by step. The entire ceremony happens inside <ins>**spawn_shell()**</ins> in [pty.rs](src/rushx_term/pty.rs), called once at terminal startup.
 
 The parent process (terminal emulator) begins by calling **openpty(3)** to allocate a PTY master/slave pair. It then prepares the **CString** arguments for **execvp** while still single-threaded, before any **fork(2)**. 
