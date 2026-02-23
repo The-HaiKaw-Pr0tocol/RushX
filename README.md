@@ -100,11 +100,13 @@ RushX interfaces directly with the Linux kernel for process creation, session ma
   - [6.1 Implementation Status Matrix](#61-implementation-status-matrix)
   - [6.2 Known Limitations](#62-known-limitations)
   - [6.3 Roadmap](#63-roadmap)
+
+---
+
 - [7. Installation & Building](#7-installation--building)
   - [7.1 Install via APT](#72-install-via-apt)
   - [7.2 Build from Source](#71-build-from-source)
-- [8. License](#8-license)
-- [9. References](#9-references)
+- [8. References](#9-references)
 
 <br />
 
@@ -562,31 +564,20 @@ Requires a Linux system with Rust (edition 2024) and GTK4 development headers in
 #- Install GTK4 development dependencies (Debian/Ubuntu) -#
 sudo apt-get install -y libgtk-4-dev build-essential
 
-# Clone and build
+#- Clone and build -#
 git clone https://github.com/The-HaiKaw-Pr0tocol/rushx.git
 cd rushx
 cargo build --release
 
-# Run
+#- Run -#
 ./target/release/rushx
 ```
 
 The binary is fully self-contained. No additional runtime files are needed.
 
-
 ---
 
-## 8. License
-
-RushX is licensed under the **GNU General Public License v3.0 or later** (GPL-3.0-or-later).
-
-Copyright 2025-2026 The HaiKaw Pr0tocol (Haitam Bidiouane, Kawtar Taik) and RushX contributors.
-
-You are free to redistribute and modify this software under the terms of the GPL. See the [debian/copyright](./debian/copyright) file for the full license text.
-
----
-
-## 9. References
+## 8. References
 
 1. Cefboud. _Exploring Terminals, TTYs, and PTYs_. [https://cefboud.com/posts/terminals-pty-tty-pyte/](https://cefboud.com/posts/terminals-pty-tty-pyte/)
 
