@@ -7,7 +7,7 @@
 //!
 //! - **File**: src/rushx_shell/mod.rs
 //! - **Module**: rushx_shell
-//! - **Last Update**: 02/18/2026
+//! - **Last Update**: 02/26/2026
 //! - **Last Updated By**: sch0penheimer
 //! - **Version**: 0.1.0
 //! - **Copyright**: © 2026 The HaiKaw Pr0tocol
@@ -27,7 +27,7 @@ use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 
-use nix::sys::termios::{self, Termios, SetArg, LocalFlags, InputFlags};
+use nix::sys::termios::{self, InputFlags, LocalFlags, SetArg, Termios};
 
 ///
 /// #### **<ins>Function</ins>**
@@ -82,7 +82,8 @@ const BUILTIN_COMMANDS: &[&str] = &["echo", "exit", "type", "pwd", "cd"];
 fn enable_raw_mode(fd: i32) -> Termios {
     let original = termios::tcgetattr(fd).expect("tcgetattr failed");
     let mut raw = original.clone();
-    raw.local_flags.remove(LocalFlags::ICANON | LocalFlags::ECHO | LocalFlags::ISIG);
+    raw.local_flags
+        .remove(LocalFlags::ICANON | LocalFlags::ECHO | LocalFlags::ISIG);
     raw.input_flags.remove(InputFlags::ICRNL);
     termios::tcsetattr(fd, SetArg::TCSANOW, &raw).expect("tcsetattr failed");
     original
@@ -357,13 +358,15 @@ fn read_line_with_completion() -> Option<String> {
                 io::stdout().write_all(&byte).ok();
                 io::stdout().flush().ok();
             }
-            _ => { last_was_tab = false; }
+            _ => {
+                last_was_tab = false;
+            }
         }
     }
 }
 
 ///
-/// #### **<ins>Function</ins>** 
+/// #### **<ins>Function</ins>**
 /// ```Rust
 ///     run_rushx_shell() -> ()
 /// ```
@@ -456,14 +459,86 @@ pub fn run_rushx_shell() -> () {
             None => Box::new(io::stderr()),
         };
 
+        /*-- Built-in cmd Router */
         match args[0].as_str() {
             "exit" => break,
             "echo" => {
-                if args.len() > 1 {
-                    writeln!(out, "{}", args[1..].join(" ")).ok();
-                } else {
-                    writeln!(out).ok();
+                /*-- Parse leading flags: -e (interpret escapes), -n (no newline) --*/
+                /*-- Supports combined forms: -en, -ne, -eee, etc. --*/
+                let mut interpret_escapes = false;
+                let mut no_newline = false;
+                let mut word_start = 1usize;
+
+                for arg in &args[1..] {
+                    if arg.starts_with('-')
+                        && arg.len() > 1
+                        && arg[1..].chars().all(|c| c == 'e' || c == 'n')
+                    {
+                        for c in arg[1..].chars() {
+                            if c == 'e' {
+                                interpret_escapes = true;
+                            }
+                            if c == 'n' {
+                                no_newline = true;
+                            }
+                        }
+                        word_start += 1;
+                    } else {
+                        break;
+                    }
                 }
+
+                let text = args[word_start..].join(" ");
+
+                /*-- Interpret POSIX escape sequences when -e is active --*/
+                let output = if interpret_escapes {
+                    let mut result = String::with_capacity(text.len());
+                    let mut chars = text.chars().peekable();
+                    while let Some(c) = chars.next() {
+                        if c == '\\' {
+                            match chars.next() {
+                                Some('e') | Some('E') => result.push('\x1b'), //-- ESC --//
+                                Some('n') => result.push('\n'),
+                                Some('r') => result.push('\r'),
+                                Some('t') => result.push('\t'),
+                                Some('\\') => result.push('\\'),
+                                Some('0') => {
+                                    /*-- \0NNN: octal byte --*/
+                                    let mut oct = String::new();
+                                    for _ in 0..3 {
+                                        match chars.peek() {
+                                            Some(&d) if d.is_ascii_digit() => {
+                                                oct.push(d);
+                                                chars.next();
+                                            }
+                                            _ => break,
+                                        }
+                                    }
+                                    if let Ok(v) = u8::from_str_radix(&oct, 8) {
+                                        result.push(v as char);
+                                    }
+                                }
+                                Some(other) => {
+                                    result.push('\\');
+                                    result.push(other);
+                                }
+                                None => result.push('\\'),
+                            }
+                        } else {
+                            result.push(c);
+                        }
+                    }
+                    result
+                } else {
+                    text
+                };
+
+                if no_newline {
+                    write!(out, "{}", output).ok();
+                } else {
+                    writeln!(out, "{}", output).ok();
+                }
+                out.flush().ok();
             }
             "type" => {
                 if args.len() < 2 {
@@ -473,18 +548,24 @@ pub fn run_rushx_shell() -> () {
                         writeln!(out, "{} is a shell builtin", args[1]).ok();
                     } else {
                         match exec::find_executable_in_path(&args[1]) {
-                            Some(path) => { writeln!(out, "{} is {}", args[1], path.display()).ok(); }
-                            None => { writeln!(out, "{}: not found", args[1]).ok(); }
+                            Some(path) => {
+                                writeln!(out, "{} is {}", args[1], path.display()).ok();
+                            }
+                            None => {
+                                writeln!(out, "{}: not found", args[1]).ok();
+                            }
                         }
                     }
                 }
             }
-            "pwd" => {
-                match env::current_dir() {
-                    Ok(path) => { writeln!(out, "{}", path.display()).ok(); }
-                    Err(e) => { writeln!(err, "pwd: {}", e).ok(); }
+            "pwd" => match env::current_dir() {
+                Ok(path) => {
+                    writeln!(out, "{}", path.display()).ok();
                 }
-            }
+                Err(e) => {
+                    writeln!(err, "pwd: {}", e).ok();
+                }
+            },
             "cd" => {
                 let home = env::var("HOME").unwrap_or_default();
                 let resolved = if args.len() < 2 || args[1] == "~" {
