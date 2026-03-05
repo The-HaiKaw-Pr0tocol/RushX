@@ -1,48 +1,116 @@
-.TH RUSHX 1 "February 2026" "RushX 1.0.0" "User Commands"
+.TH RUSHX 1 "March 2026" "RushX 1.7.0" "User Commands"
 .SH NAME
-rushx \- POSIX-style shell and terminal emulator (early prototype)
+rushx \- POSIX-style terminal emulator and shell
 .SH SYNOPSIS
 .B rushx
-[\fB--rushx-shell\fR]
+[\fB\-\-rushx\-shell\fR]
 .SH DESCRIPTION
-RushX is a Rust-based terminal emulator and shell. By default it launches the
-terminal emulator window. With \fB--rushx-shell\fR it runs an interactive shell
-REPL in the terminal.
-
-The current shell implementation is minimal and supports only a small set of
-built-in commands.
+RushX (Rust Shell \- eXtended) is a single-binary Linux terminal emulator and
+shell implemented in Rust. By default it launches a GTK4-based terminal emulator
+window that allocates a pseudoterminal (PTY), spawns itself as a child process
+in shell mode, and renders output with full ANSI color support. With
+\fB\-\-rushx\-shell\fR it runs the interactive shell directly on the calling
+terminal.
+.PP
+The terminal emulator provides a bidirectional I/O pipeline between the user and
+the shell: a reader thread, a 16 ms poll timer, an ANSI/VT100 escape sequence
+parser with SGR color and attribute rendering (16-color Catppuccin Mocha palette,
+256-color indexed, 24-bit RGB), and Cairo-based text drawing with per-segment
+styling. A blink cursor and system bell (BEL) are supported.
+.PP
+The shell operates in raw terminal mode, providing a user@hostname:cwd prompt,
+character-by-character input, and interactive tab completion for command names
+and file paths. It supports POSIX-style quoting, output redirection, five
+builtin commands, and external command execution via fork/execvp/waitpid.
 .SH OPTIONS
 .TP
-.B --rushx-shell
-Start the interactive shell REPL instead of the GUI terminal.
+.B \-\-rushx\-shell
+Start the interactive shell REPL instead of the GUI terminal emulator. This
+flag is also used internally by the terminal emulator when it re-executes itself
+to spawn the shell child process.
 .SH BUILTINS
 .TP
 .B exit
-Exit the shell.
+Terminate the shell immediately.
 .TP
-.B echo \fIARGS...\fR
-Print arguments to stdout.
+.B echo \fR[\fB\-e\fR] [\fB\-n\fR] [\fIARGS\fR...]
+Print arguments to stdout, joined by spaces. \fB\-n\fR suppresses the trailing
+newline. \fB\-e\fR enables interpretation of escape sequences: \\n (newline),
+\\r (carriage return), \\t (tab), \\\\ (backslash), \\e (ESC), and \\0NNN
+(octal byte). Flags can be combined (\fB\-en\fR, \fB\-ne\fR).
 .TP
 .B type \fICOMMAND\fR
-Report whether COMMAND is a shell builtin or an executable found in PATH.
-.SH FILES
+Report whether COMMAND is a shell builtin or an external executable. For
+externals, prints the resolved path. If not found, prints an error.
 .TP
-.I ~/.rushxrc
-Planned configuration file (not yet implemented).
+.B pwd
+Print the current working directory.
+.TP
+.B cd \fR[\fIDIR\fR]
+Change the working directory. Supports \fB~\fR (home), \fB~/subdir\fR
+(home-relative), \fB\-\fR (previous directory), and absolute or relative paths.
+.SH TAB COMPLETION
+Pressing Tab on the first word completes command names by searching builtins and
+executable files in PATH (filtered by execute permission). On subsequent words,
+Tab completes file and directory names; directories are suffixed with /. A single
+match auto-fills with a trailing space; multiple matches extend to their longest
+common prefix; a second Tab lists all candidates. No match rings the bell.
+.SH REDIRECTION
+Output redirection is supported:
+.PP
+.RS
+\fBcommand\fR > \fIfile\fR (stdout, truncate)
+.br
+\fBcommand\fR >> \fIfile\fR (stdout, append)
+.br
+\fBcommand\fR 2> \fIfile\fR (stderr, truncate)
+.br
+\fBcommand\fR 2>> \fIfile\fR (stderr, append)
+.RE
+.PP
+Stdout and stderr can be redirected independently in the same command. Input
+redirection (<) and pipes (|) are not yet implemented.
+.SH QUOTING
+Single quotes preserve all characters literally. Double quotes allow backslash
+escapes for \\, ", $, `, and newline. An unquoted backslash escapes the
+immediately following character.
 .SH EXIT STATUS
-The shell returns 0 on normal exit. Unrecognized commands print an error.
+The shell returns 0 on normal exit via the \fBexit\fR builtin or EOF. External
+commands that exit with a non-zero status have their exit code printed to stderr.
 .SH EXAMPLES
-.TP
 Launch the GUI terminal:
+.PP
+.RS
 .B rushx
-.TP
-Run the shell REPL:
-.B rushx --rushx-shell
-.TP
-Find a command:
-.B type ls
+.RE
+.PP
+Run the shell directly:
+.PP
+.RS
+.B rushx \-\-rushx\-shell
+.RE
+.PP
+Redirect output to a file:
+.PP
+.RS
+.B echo hello > output.txt
+.RE
+.PP
+Redirect stderr:
+.PP
+.RS
+.B ls /nonexistent 2> errors.log
+.RE
+.SH LIMITATIONS
+CSI sequences for cursor positioning (CUP, CUU, CUD, CUF, CUB) are discarded;
+programs that rely on cursor addressing (vim, htop, less) will not render
+correctly. There is no scrollback buffer, no pipeline support, no variable or
+glob expansion, no signal handling beyond kernel defaults, and no runtime
+configuration file.
 .SH AUTHORS
-RushX is authored by Haitam Bidiouane and Kawtar Taik under The HaiKaw Pr0tocol organization.
+Haitam Bidiouane and Kawtar Taik, The HaiKaw Pr0tocol organization.
 .SH SEE ALSO
 .BR bash (1),
-.BR sh (1)
+.BR sh (1),
+.BR pts (4),
+.BR pty (7)
