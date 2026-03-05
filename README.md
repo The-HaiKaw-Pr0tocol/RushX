@@ -85,6 +85,7 @@ RushX interfaces directly with the Linux kernel for process creation, session ma
     - [3.3.4 Rendering](#334-rendering)
     - [3.3.5 Keyboard Input](#335-keyboard-input)
   - [3.4 Configuration](#34-configuration)
+  - [3.5 ANSI Escape Sequence Parser](#35-ansi-escape-sequence-parser)
 - [4. Shell (`rushx_shell`)](#4-shell-rushx_shell)
   - [4.1 REPL Loop](#41-repl-loop)
   - [4.2 Parsing](#42-parsing)
@@ -95,6 +96,7 @@ RushX interfaces directly with the Linux kernel for process creation, session ma
     - [4.4.1 PATH Resolution](#441-path-resolution)
     - [4.4.2 Fork/Exec Lifecycle](#442-forkexec-lifecycle)
   - [4.5 I/O Redirection Mechanism](#45-io-redirection-mechanism)
+  - [4.6 Tab Completion](#46-tab-completion)
 - [5. POSIX Compliance & Syscall Interface](#5-posix-compliance--syscall-interface)
 - [6. Project Status & Roadmap](#6-project-status--roadmap)
   - [6.1 Implementation Status Matrix](#61-implementation-status-matrix)
@@ -201,14 +203,16 @@ Figure 2 maps out the full module tree. RushX is partitioned into 3 top-level mo
 
 ---
 
-2. **`rushx_term`** is the terminal emulator. Its root : [mod.rs](./src/rushx_term/mod.rs) builds the GTK4 window, wires the I/O pipeline (reader thread, poll timer, draw function, blink timer, keyboard handler), and runs the **process_pty_output()** state machine that strips escape sequences and feeds characters to the Cairo renderer. Two submodules support it:
+2. **`rushx_term`** is the terminal emulator. Its root : [mod.rs](./src/rushx_term/mod.rs) builds the GTK4 window, wires the I/O pipeline (reader thread, poll timer, draw function, blink timer, keyboard handler), and runs **process_pty_output()** which feeds raw PTY bytes through a stateful ANSI parser and produces styled text spans for the Cairo renderer. Three submodules support it:
    - **2.1** _<ins>`pty`</ins>_ : Allocates the PTY master/slave pair and spawns the shell child process via fork/exec.
 
-   - **2.2** _<ins>`config`</ins>_ : Defines compile-time constants: application ID, window geometry, colors, font, shell path (**_/proc/self/exe_**), shell flag (**_--rushx-shell_**), and buffer sizes.
+   - **2.2** _<ins>`config`</ins>_ : Defines compile-time constants: application ID, window geometry, default colors, font, shell path (**_/proc/self/exe_**), shell flag (**_--rushx-shell_**), and buffer sizes.
+
+   - **2.3** _<ins>`ansi`</ins>_ : A full ANSI/VT100 escape sequence parser. Implements a four-state machine (Normal, Esc, Csi, Osc), color types (16-color ANSI palette, 256-color indexed, 24-bit RGB), SGR attribute tracking (bold, dim, italic, underline, reverse, strikethrough), and a Catppuccin Mocha color scheme. Produces structured styled spans that the renderer draws with per-segment colors.
 
 ---
 
-3. **`rushx_shell`** is the RushX shell. Its root [mod.rs](./src/rushx_shell/mod.rs) runs the REPL loop: print prompt, read line, dispatch to builtin or external command. Four submodules handle the rest:
+3. **`rushx_shell`** is the RushX shell. Its root [mod.rs](./src/rushx_shell/mod.rs) runs the REPL loop in raw terminal mode: build a user@hostname:cwd prompt, read input character by character with tab completion, and dispatch to builtin or external command. Four submodules handle the rest:
    - **3.1** _<ins>`parser`</ins>_ : Implements the quote-aware argument tokenizer and the redirection parser. **lexer.rs** is scaffolded for a future token-stream lexer but currently empty.
 
    - **3.2** _<ins>`exec`</ins>_ : Implements **run_external()** (fork, fd redirection via **open/dup2**, **execvp**, **waitpid**), **find_executable_in_path()**, and **is_builtin()**.
@@ -338,25 +342,23 @@ When the channel disconnects (shell exited, reader thread gone), the timer close
 
 #### 3.3.3 PTY Output Processing
 
-The state machine that sits between raw PTY data and the text buffer. It decodes the incoming bytes as UTF-8 (lossy), then walks character by character, applying these rules in priority order:
+The **process_pty_output()** function sits between raw PTY data and the styled text buffer. It feeds each incoming byte chunk to the **AnsiParser** (described in [Section 3.5](#35-ansi-escape-sequence-parser)), which returns a stream of discrete **Action** values: styled text spans, backspace, carriage return, erase-display, or bell.
 
-- **Backspace** (0x08): removes the last character on the current line.
-- **\r\n**: consumed as a single newline.
-- **Standalone \r**: truncates back to the start of the current line (handles progress bars and overwrite-style output).
-- **CSI sequences** (ESC + [): consumes all parameter bytes until the final byte. Only "Erase in Display" (clear screen / clear scrollback) is acted upon; all other CSI sequences are silently stripped.
-- **OSC sequences** (ESC + ]): consumed and discarded (terminal title changes, etc.).
-- **BEL and NUL**: silently ignored.
-- **Everything else**: appended verbatim.
+Each action is applied to the buffer by **apply_action()**: text spans are appended with their current color and attribute state, backspace removes the last character, carriage return truncates to the start of the current line, and erase-display clears the buffer entirely. If any bell action is encountered, the function signals the poll timer to play the system beep via GDK.
 
-The function modifies the buffer in place with no per-character allocations.
+The parser is stateful across calls. An escape sequence that arrives split across two read chunks is reassembled correctly because the parser retains its position in the state machine between invocations.
 
 #### 3.3.4 Rendering
 
-A Cairo draw callback is installed on the GTK DrawingArea. Every time a repaint is triggered (by the poll timer or the blink timer), it executes three passes:
+A Cairo draw callback is installed on the GTK DrawingArea. Before painting, **build_render_lines()** transforms the flat span buffer into a two-dimensional structure: a list of lines, where each line is a list of (text, style) segments. This function handles newline splitting and preserves per-segment color and attribute information.
 
-1. **Background fill** with a dark blue-gray (#1e1e2e).
-2. **Text** in monospace at 14pt, light gray (#cdd6f4). The buffer is split on newlines, and only the last N lines that fit the window height are drawn (auto-scroll to bottom).
+The draw pass then proceeds in three stages:
+
+1. **Background fill** with the default dark blue-gray (#1e1e2e).
+2. **Styled text**, rendered segment by segment. Each segment carries its own foreground color, background color, and attributes (reverse video, etc.). If a segment has a non-default background, a colored rectangle is painted behind it before the text. Reverse video swaps the foreground and background. Only the last N lines that fit the window height are drawn (auto-scroll to bottom).
 3. **Block cursor** at the end of the last visible line, one character wide.
+
+Color values come from two sources: the default terminal foreground and background live in [config.rs](./src/rushx_term/config.rs), while the 16-color ANSI palette (Catppuccin Mocha theme), 256-color indexed values, and 24-bit RGB are resolved by the Color type in [ansi.rs](./src/rushx_term/ansi.rs).
 
 A separate **blink timer** toggles cursor visibility every 500 ms. The poll timer resets it to visible whenever new output arrives, so the cursor stays solid while the shell is actively printing.
 
@@ -375,6 +377,12 @@ All tunable parameters live in a single file: [config.rs](./src/rushx_term/confi
 The constants cover application identity (GTK/D-Bus ID, window title), window geometry (800 x 500 default), color scheme (dark blue-gray background #1e1e2e, light gray text #cdd6f4), font and text layout (monospace at 14pt, 18 px line height, 4 px padding), and shell invocation (/proc/self/exe path, --rushx-shell flag, 4096-byte read buffer).
 
 Because everything is const, changing any value requires recompilation. There is no runtime configuration file, no CLI flags beyond the single --rushx-shell switch, and no theming support yet.
+
+### 3.5 ANSI Escape Sequence Parser
+
+The ANSI parser in [ansi.rs](./src/rushx_term/ansi.rs) converts raw PTY byte streams into styled, colored output. It is built around a four-state machine (Normal, Esc, Csi, Osc). In Normal state, printable characters accumulate into styled text spans; an ESC byte transitions to Esc, which branches into Csi (for CSI sequences like SGR color commands and erase-display) or Osc (for operating system commands, which are consumed and discarded). Control characters are handled directly: backspace, carriage return, and BEL each produce a corresponding action. The parser is stateful across calls, so escape sequences split across read chunks are reassembled correctly.
+
+The SGR interpreter supports the full standard set: text attributes (bold, dim, italic, underline, blink, reverse video, strikethrough), foreground and background colors via codes 30--37 / 40--47 and their bright variants 90--97 / 100--107, 256-color indexed palettes (38;5;n / 48;5;n), and 24-bit RGB (38;2;r;g;b / 48;2;r;g;b). The base 16-color palette uses the **Catppuccin Mocha** color scheme. The parser produces **StyledSpan** values, each carrying a text string and an attribute snapshot (colors and flags at the time of emission), which are collected into a flat buffer and transformed into renderable lines by **build_render_lines()** for the Cairo draw callback.
 
 <br />
 
@@ -461,6 +469,12 @@ For **external commands**, redirection is applied in the child process after for
 
 Both paths support independent stdout and stderr redirection in the same command.
 
+### 4.6 Tab Completion
+
+The shell provides interactive tab completion whose behavior depends on cursor position. On the **first word** (command position), Tab searches the builtin names and every executable in PATH (filtered by execute permission, deduplicated, sorted). On **subsequent words** (argument position), Tab performs file and directory completion: it splits the current word at the last path separator, substitutes ~ for the home directory if needed, scans the target directory, and suffixes directory matches with / so the user can keep completing deeper paths.
+
+When exactly one candidate matches, the remaining characters are filled in automatically with a trailing space (or / for directories). When multiple candidates share a common prefix longer than what is already typed, a single Tab extends to that prefix and stops. A second Tab press lists all candidates, reprints the prompt, and waits for further input. If nothing matches, the terminal bell sounds.
+
 ---
 
 ## 5. POSIX Compliance & Syscall Interface
@@ -493,13 +507,17 @@ The shell's quoting rules (single quotes literal, double quotes with limited esc
 | GTK4 window + DrawingArea                             | Done        | Cairo toy text API rendering                                    |
 | Reader thread + mpsc channel                          | Done        | 4096-byte buffer, blocking read                                 |
 | Poll timer (16 ms)                                    | Done        | Drains channel, triggers redraw                                 |
-| PTY output state machine                              | Partial     | CSI stripped but not interpreted (no color, no cursor movement) |
+| PTY output state machine                              | Done        | Full ANSI parser with SGR, ED, BEL (see Section 3.5)           |
+| ANSI color rendering                                  | Done        | 16-color palette + 256-color + 24-bit RGB, per-segment styling  |
+| Bell support (BEL 0x07)                               | Done        | Detected by parser, played via GDK system beep                  |
 | Cursor rendering + blink                              | Done        | Block cursor, 500 ms blink                                      |
 | Keyboard input + ANSI escapes                         | Done        | Ctrl, arrows, Delete, Home/End, UTF-8                           |
-| REPL loop                                             | Done        | Prompt, read, dispatch                                          |
+| REPL loop                                             | Done        | Raw mode input, user@hostname:cwd prompt, tab completion        |
 | Argument tokenizer                                    | Done        | POSIX-style single/double quote handling                        |
 | Redirection parser                                    | Done        | >, >>, 1>, 1>>, 2>, 2>>                                         |
-| Builtin commands                                      | Done        | exit, echo, type, pwd, cd                                       |
+| Builtin commands                                      | Done        | exit, echo (-e/-n), type, pwd, cd                               |
+| Tab completion                                        | Done        | Command names (builtins + PATH) and file/directory paths        |
+| Raw terminal mode                                     | Done        | Disables ICANON/ECHO/ISIG/ICRNL, restores before exec          |
 | External command execution                            | Done        | fork/execvp/waitpid                                             |
 | PATH resolution                                       | Done        | Search + execute-bit check                                      |
 | Lexer (token stream)                                  | Stub        | lexer.rs exists but is empty                                    |
@@ -511,13 +529,13 @@ The shell's quoting rules (single quotes literal, double quotes with limited esc
 | Job control (bg/fg/jobs)                              | Not started |                                                                 |
 | Signal handling (SIGINT/SIGTSTP)                      | Not started | Relies on kernel defaults                                       |
 | Scrollback buffer                                     | Not started | Only visible lines are kept                                     |
-| ANSI color support                                    | Not started | CSI color codes are stripped                                    |
+| Cursor movement (CUP, CUU, etc.)                     | Not started | CSI cursor sequences are discarded                              |
 | Termios configuration                                 | Not started | PTY uses kernel defaults                                        |
 | Runtime config file                                   | Not started | All values are compile-time consts                              |
 
 ### 6.2 Known Limitations
 
-- **No ANSI color or cursor movement.** CSI sequences are stripped rather than interpreted. Programs that rely on colors or cursor positioning (vim, htop, less) will not render correctly.
+- **No cursor movement commands.** CSI sequences for cursor positioning (CUP, CUU, CUD, CUF, CUB) are discarded. ANSI colors and text attributes are fully supported, but programs that rely on cursor addressing (vim, htop, less) will not render correctly.
 - **No scrollback.** The text buffer grows unbounded in memory but there is no scroll mechanism; only the last N lines that fit the window are visible.
 - **No signal handling.** The shell does not install handlers for SIGINT, SIGTSTP, or SIGCHLD. Ctrl-C and Ctrl-Z work through the kernel's line discipline, but the shell cannot trap or forward signals to job groups.
 - **No pipelines or input redirection.** Only output redirection (> and >>) is implemented. Pipes and < are not parsed.
@@ -534,8 +552,7 @@ Near-term priorities:
 2. Build an AST layer so the parser can represent pipelines, conditionals, and compound commands.
 3. Add pipeline support ( | ) with pipe(2) between child processes.
 4. Implement variable expansion ($VAR, $?, $$) and tilde expansion.
-5. Add basic ANSI color support in the PTY output state machine (SGR sequences).
-6. Install signal handlers for SIGINT and SIGTSTP in the shell, and forward them correctly to foreground process groups.
+5. Install signal handlers for SIGINT and SIGTSTP in the shell, and forward them correctly to foreground process groups.
 
 Longer-term goals:
 
@@ -544,7 +561,7 @@ Longer-term goals:
 - Job control (bg, fg, jobs, Ctrl-Z suspend/resume).
 - Scrollback buffer with keyboard scrolling.
 - Runtime configuration file for colors, font, keybindings.
-- History and line editing.
+- Persistent command history (up/down arrow recall across sessions).
 
 ---
 
