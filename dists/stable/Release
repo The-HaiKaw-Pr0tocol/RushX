@@ -1,0 +1,20 @@
+Origin: RushX
+Label: RushX
+Suite: stable
+Codename: stable
+Date: Thu, 05 Mar 2026 23:50:24 UTC
+Architectures: amd64
+Components: main
+Description: RushX APT repository
+MD5Sum:
+ 19ff4014c10bb16feeac21f3d55f6b02 741 main/binary-amd64/Packages
+ e8c9ff9ffaabbe8a125ee636558b909a 531 main/binary-amd64/Packages.gz
+ 7c51ad2d9d5a4f741562772c5fb5c221 113 main/binary-amd64/Release
+SHA1:
+ 214b2f6bbdaa26d7a36e148763212f07fe4c1fb9 741 main/binary-amd64/Packages
+ af76eb57d0e67a1a1ba6cebbe3d997b8e59c32f9 531 main/binary-amd64/Packages.gz
+ 03a4f31c9afd08aefede436d04c5b4f5682a2884 113 main/binary-amd64/Release
+SHA256:
+ e3eaebde9a22e39751c5915faa39fcbb2260367695b56c856ea95a13592238f5 741 main/binary-amd64/Packages
+ 86687d86187a874336c4bb236d46ea11a0b73448be154f7a6a1031e84a9911ac 531 main/binary-amd64/Packages.gz
+ 7e2c51f140bda3b09afd14104e18427699afaa5bf4a3db8060a3d389c02cc5bb 113 main/binary-amd64/Release

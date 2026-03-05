@@ -1,0 +1,6 @@
+Archive: stable
+Component: main
+Origin: RushX
+Label: RushX
+Architecture: amd64
+Description: RushX APT repository

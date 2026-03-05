@@ -1,0 +1,16 @@
+Package: rushx
+Version: 1.0.0-1
+Architecture: amd64
+Maintainer: Haitam Bidiouane <h.bidiouane@gmail.com>
+Installed-Size: 691
+Depends: libc6 (>= 2.34), libcairo2 (>= 1.2.4), libgcc-s1 (>= 4.2), libglib2.0-0t64 (>= 2.54.0), libgtk-4-1 (>= 4.0.0)
+Homepage: https://github.com/The-HaiKaw-Pr0tocol/RushX
+Priority: optional
+Section: utils
+Filename: pool/main/r/rushx/rushx_1.0.0-1_amd64.deb
+Size: 282202
+SHA256: b1881673f56b9781f92b866b9064c24f992724ff7ac19a9ffcf762a6b5596b65
+SHA1: 7a97e1f2da8ab5cc1725c9776fc1b48ba7d36cb2
+MD5sum: 3f3fbe416021e6ce14ded0fb36bc5ca5
+Description: RushX is a POSIX-compliant UNIX terminal emulator & shell written in Rust. It focuses on all low-level aspects form process control, PTY management, up to job control.
+

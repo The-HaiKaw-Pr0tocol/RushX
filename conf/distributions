@@ -1,0 +1,8 @@
+Origin: RushX
+Label: RushX
+Suite: stable
+Codename: stable
+Architectures: amd64
+Components: main
+Description: RushX APT repository
+SignWith: yes
