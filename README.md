@@ -2,9 +2,9 @@
 
 ### Overview
 
-RushX (Rust Shell - eXtended) is a POSIX-compliant Linux <ins>**terminal emulator**</ins> & <ins>**shell**</ins> implemented in Rust. It ships as a single binary: A GTK4-based terminal emulator that allocates a pseudoterminal (PTY) and renders output via Cairo, and calls by default an interactive POSIX-style shell that performs tokenization, redirection parsing, builtin dispatch, and `fork(2)`/`execvp(3)` execution of external commands.
+RushX (Rust Shell - eXtended) is a POSIX-compliant Linux <ins>**terminal emulator**</ins> & <ins>**shell**</ins> implemented in Rust. It ships as a single binary: A GTK4-based terminal emulator that allocates a pseudoterminal (PTY), and calls by default an interactive POSIX-style shell that performs tokenization, redirection parsing, builtin dispatch, and execution of external commands.
 
-RushX interfaces directly with the Linux kernel for process creation, session management, and controlling terminal assignment. No external libraries handle PTY allocation, signal delivery, or process lifecycle, and the <ins>**_nix_**</ins> crate provides safe Rust wrappers around the main syscalls, while raw <ins>**_libc::ioctl_**</ins> is used where no safe wrapper exists.
+RushX interfaces directly with the Linux kernel for process creation, session management, and controlling terminal assignment. No external libraries handle PTY allocation, signal delivery, or process lifecycle, it uses safe Rust wrappers around the main syscalls, while raw invocations are used where no safe wrapper exists.
 
 > Developed & Maintained by [The HaiKaw Pr0tocol](https://github.com/The-HaiKaw-Pr0tocol) organization.
 
@@ -119,7 +119,9 @@ RushX interfaces directly with the Linux kernel for process creation, session ma
 
 <div align="center">
 
-_How classic terminals input/output flows: from the physical terminal over UART into the kernel’s TTY stack (driver + line discipline), and then to user processes. Source: [Terminal Emulators Under the Hood](https://funinkina.is-a.dev/blog/terminal-emulators-under-the-hood/)._
+Source: [Terminal Emulators Under the Hood](https://funinkina.is-a.dev/blog/terminal-emulators-under-the-hood/)
+
+_How classic terminals input/output flows: from the physical terminal over UART into the kernel’s TTY stack (driver + line discipline), and then to user processes._
 
 </div>
 
@@ -139,6 +141,9 @@ Now mosst terminal emulators treat the shell as an opaque subprocess, while shel
 
 ## 2. Architecture
 
+> [!IMPORTANT]
+> This represents our current architectural vision for RushX. As development progresses, this design may evolve based on implementation discoveries.
+
 <div align="center">
 
 ![RushX's Lifecycle](./assets/RushX_Lifecycle.png)
@@ -147,8 +152,6 @@ _**Figure 1**: RushX Terminal & Shell Command Execution Lifecycle - Architecture
 
 </div>
 
-> [!IMPORTANT]
-> This represents our current architectural vision for RushX. As development progresses, this design may evolve based on implementation discoveries.
 
 <br/>
 
