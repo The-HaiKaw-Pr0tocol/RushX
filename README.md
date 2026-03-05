@@ -154,7 +154,6 @@ _**Figure 1**: RushX Terminal & Shell Command Execution Lifecycle - Architecture
 
 </div>
 
-
 <br/>
 
 Well, the considered full command execution lifecycle of RushX could be mainly sectioned into five phases:
@@ -328,47 +327,23 @@ The five subsections below walk through each emulator-side component in detail.
 
 #### 3.3.1 Reader Thread
 
-A dedicated background thread sits in a blocking read loop on the PTY master fd, reading into a 4096-byte stack buffer. Each successful read is copied into a byte vector and sent through a standard mpsc channel to the GTK main thread.
-
-The thread terminates when the read returns EOF (shell closed stdout), EIO (slave side closed), or the channel receiver has been dropped (GTK shut down). In all cases the thread exits silently, disconnecting the channel and signaling the poll timer to close the window.
+A dedicated background thread blocks on the PTY master fd, reading into a 4096-byte buffer. Each chunk is sent through an mpsc channel to the GTK main thread. The thread exits silently on EOF, EIO, or a dropped channel receiver.
 
 #### 3.3.2 Poll Timer
 
-A GLib timeout fires every **16 ms** (roughly 60 fps) on the GTK main loop. Each tick drains all pending messages from the reader thread's channel without blocking.
-
-For each byte chunk received, the timer feeds it through the output processing state machine and appends the results to the shared text buffer. If anything arrived, it resets the cursor to visible (interrupting any ongoing blink) and schedules a Cairo repaint.
-
-When the channel disconnects (shell exited, reader thread gone), the timer closes the application window, which causes GTK to quit.
+A GLib timeout fires every **16 ms** (~60 fps) on the GTK main loop, draining all pending messages from the reader thread's channel. Each byte chunk is fed through the output processing pipeline and the results are appended to the styled text buffer. If anything arrived, the cursor resets to visible and a Cairo repaint is scheduled. When the channel disconnects (shell exited), the timer closes the window.
 
 #### 3.3.3 PTY Output Processing
 
-The **process_pty_output()** function sits between raw PTY data and the styled text buffer. It feeds each incoming byte chunk to the **AnsiParser** (described in [Section 3.5](#35-ansi-escape-sequence-parser)), which returns a stream of discrete **Action** values: styled text spans, backspace, carriage return, erase-display, or bell.
-
-Each action is applied to the buffer by **apply_action()**: text spans are appended with their current color and attribute state, backspace removes the last character, carriage return truncates to the start of the current line, and erase-display clears the buffer entirely. If any bell action is encountered, the function signals the poll timer to play the system beep via GDK.
-
-The parser is stateful across calls. An escape sequence that arrives split across two read chunks is reassembled correctly because the parser retains its position in the state machine between invocations.
+**process_pty_output()** feeds each incoming byte chunk to the **AnsiParser** (see [Section 3.5](#35-ansi-escape-sequence-parser)), which returns a stream of **Action** values: styled text spans, backspace, carriage return, erase-display, or bell. Each action is applied to the buffer by **apply_action()**. If a bell action is encountered, the poll timer plays the system beep via GDK. The parser is stateful across calls, so escape sequences split across read chunks are reassembled correctly.
 
 #### 3.3.4 Rendering
 
-A Cairo draw callback is installed on the GTK DrawingArea. Before painting, **build_render_lines()** transforms the flat span buffer into a two-dimensional structure: a list of lines, where each line is a list of (text, style) segments. This function handles newline splitting and preserves per-segment color and attribute information.
-
-The draw pass then proceeds in three stages:
-
-1. **Background fill** with the default dark blue-gray (#1e1e2e).
-2. **Styled text**, rendered segment by segment. Each segment carries its own foreground color, background color, and attributes (reverse video, etc.). If a segment has a non-default background, a colored rectangle is painted behind it before the text. Reverse video swaps the foreground and background. Only the last N lines that fit the window height are drawn (auto-scroll to bottom).
-3. **Block cursor** at the end of the last visible line, one character wide.
-
-Color values come from two sources: the default terminal foreground and background live in [config.rs](./src/rushx_term/config.rs), while the 16-color ANSI palette (Catppuccin Mocha theme), 256-color indexed values, and 24-bit RGB are resolved by the Color type in [ansi.rs](./src/rushx_term/ansi.rs).
-
-A separate **blink timer** toggles cursor visibility every 500 ms. The poll timer resets it to visible whenever new output arrives, so the cursor stays solid while the shell is actively printing.
+A Cairo draw callback paints the screen in three stages: background fill (#1e1e2e), styled text rendered segment by segment (each segment carries its own foreground color, background color, and attributes like reverse video), and a block cursor at the end of the last line. Before painting, **build_render_lines()** splits the flat span buffer into lines of (text, style) segments. Only the last N lines that fit the window height are drawn (auto-scroll). A **blink timer** toggles cursor visibility every 500 ms, reset to solid whenever new output arrives.
 
 #### 3.3.5 Keyboard Input
 
-A GTK key event controller is attached to the DrawingArea. On every key press, it translates the key into a byte sequence and writes it to the PTY master fd.
-
-The mapping follows standard terminal conventions: Enter sends a carriage return, Backspace sends DEL (0x7F), arrow keys send ANSI escape sequences (ESC [ A/B/C/D), Ctrl+letter sends the corresponding control character (0x01 through 0x1A), and printable characters are encoded as UTF-8.
-
-All writes go to the same master fd that the reader thread reads from on the other side. The kernel PTY layer echoes the bytes back through the slave if the line discipline has echo enabled, so typed characters appear on screen through the normal output path, not by direct insertion into the text buffer.
+A GTK key event controller translates each key press into a byte sequence and writes it to the PTY master fd. The mapping follows standard terminal conventions: Enter sends CR, Backspace sends DEL (0x7F), arrow keys send ANSI escapes (ESC [ A/B/C/D), Ctrl+letter sends control characters (0x01--0x1A), and printable characters are encoded as UTF-8. Typed characters appear on screen through the normal PTY echo path, not by direct buffer insertion.
 
 ### 3.4 Configuration
 
@@ -402,72 +377,35 @@ _**Figure 6**: Shell REPL dispatch flowchart. Diamonds: branch conditions. Round
 
 </div>
 
-Figure 6 traces the shell's main loop. The cycle begins at the top with the prompt ("$ "), flows down through line reading, tokenization, and a branch: is the command a builtin or an external program? Each path leads to execution, then loops back to the prompt. The red exit paths show the two ways the loop terminates: the user types "exit", or stdin hits EOF.
-
-The REPL lives in **run_rushx_shell()** in [mod.rs](./src/rushx_shell/mod.rs). Each iteration prints the prompt, flushes stdout, reads a line from stdin, and passes it through the tokenizer and redirection parser. If the first token matches a builtin name, the shell handles it inline. Otherwise, control passes to the external execution engine. The loop repeats until the "exit" builtin is invoked or the read fails (EOF / broken pipe).
-
-The shell maintains a single piece of persistent state across iterations: the previous working directory (**OLDPWD**), used by "cd -" to jump back.
+Figure 6 traces the shell's main loop. **run_rushx_shell()** in [mod.rs](./src/rushx_shell/mod.rs) prints the prompt, reads a line, passes it through the tokenizer and redirection parser, and dispatches to either a builtin handler or the external execution engine. The loop repeats until "exit" is invoked or stdin hits EOF.
 
 ### 4.2 Parsing
 
 #### 4.2.1 Argument Tokenization
 
-The tokenizer in [parse.rs](./src/rushx_shell/parser/parse.rs) splits a raw input line into an argument vector, respecting POSIX-style quoting rules.
-
-It walks the input character by character, tracking whether it is currently inside single quotes, double quotes, or unquoted context. **Single quotes** preserve everything literally with no escape processing. **Double quotes** allow backslash escapes for a small set of characters (backslash itself, double quote, dollar sign, backtick, and newline). **Unquoted backslash** escapes the immediately following character. Whitespace outside quotes delimits arguments.
-
-The result is a flat vector of strings, one per argument. No variable expansion, glob expansion, or tilde expansion happens at this stage; those modules are scaffolded but not yet implemented.
+The tokenizer in [parse.rs](./src/rushx_shell/parser/parse.rs) walks the input character by character, tracking single-quote, double-quote, and unquoted contexts. Single quotes preserve everything literally; double quotes allow backslash escapes for a small set of characters; unquoted backslash escapes the next character. Whitespace outside quotes delimits arguments. The result is a flat vector of strings with no variable or glob expansion applied.
 
 #### 4.2.2 Redirection Parsing
 
-After tokenization, the argument vector is scanned for redirection operators. The parser recognizes six forms:
-
-- **>** and **1>** : redirect stdout to a file (truncate)
-- **>>** and **1>>** : redirect stdout to a file (append)
-- **2>** : redirect stderr to a file (truncate)
-- **2>>** : redirect stderr to a file (append)
-
-Each operator consumes the next token as the target filename. The parser separates redirection instructions from command arguments and returns a structured result containing the clean argument list, an optional stdout redirection, and an optional stderr redirection.
-
-Input redirection (< ) and pipe operators ( | ) are not yet supported.
+After tokenization, the argument vector is scanned for redirection operators: **>** / **1>** (stdout truncate), **>>** / **1>>** (stdout append), **2>** (stderr truncate), and **2>>** (stderr append). Each operator consumes the next token as the target filename. The parser returns a clean argument list plus optional stdout and stderr redirections. Input redirection ( < ) and pipes ( | ) are not yet supported.
 
 ### 4.3 Builtin Commands
 
-The shell recognizes five builtin commands, dispatched inline in the REPL loop without forking a child process:
-
-- **exit** : terminates the shell loop immediately.
-- **echo** : prints its arguments joined by spaces, followed by a newline. With no arguments, prints a blank line.
-- **type** : reports whether a command is a builtin or an external program. For externals, prints the resolved path. If the command is not found, says so.
-- **pwd** : prints the current working directory.
-- **cd** : changes the working directory. Supports "~" (home), "~/subdir" (home-relative), "-" (previous directory via OLDPWD), and absolute or relative paths. Prints an error if the target does not exist or is not a directory.
-
-All builtins write to the redirected output if a redirection is active, rather than always writing to the real stdout/stderr. This is handled by passing a writer object (either a file or the standard stream) into each builtin.
+Five builtins are dispatched inline without forking: **exit** (terminate), **echo** (print arguments, supports -e/-n flags), **type** (identify builtin vs external + resolved path), **pwd** (print working directory), and **cd** (change directory; supports ~, ~/subdir, -, and relative/absolute paths). All builtins write to the redirected output when a redirection is active.
 
 ### 4.4 External Command Execution
 
 #### 4.4.1 PATH Resolution
 
-When a command is not a builtin, the shell searches the PATH environment variable for a matching executable. It splits PATH on the platform separator, joins the command name to each directory, and checks whether the resulting path points to a regular file with at least one execute permission bit set (owner, group, or other).
-
-The first match wins. If no match is found, the shell prints "command not found" and returns to the prompt without forking.
+The shell splits PATH on the platform separator, joins the command name to each directory, and returns the first match that is a regular file with at least one execute permission bit set. If nothing matches, it prints "command not found" without forking.
 
 #### 4.4.2 Fork/Exec Lifecycle
 
-Once a valid executable path is resolved, the shell forks a child process. The child applies any active redirections (opening the target file and using dup2 to replace the standard fd), then calls **execvp** to overlay itself with the target program. The parent blocks on **waitpid** until the child terminates, collects the exit status, and returns to the prompt.
-
-If the child exits with a non-zero status and stderr is not redirected, the shell prints the exit code. If fork itself fails, an error is printed and the loop continues.
-
-All string arguments are converted to null-terminated C strings before the fork, since allocating after fork is unsafe in a multithreaded process (same principle as the terminal emulator's spawn_shell ceremony in [Section 2.2](#22-single-binary-self-re-exec-model)).
+The shell forks a child process. The child applies any active redirections (open + dup2), then calls **execvp** to overlay itself with the target program. The parent blocks on **waitpid** until the child terminates and collects the exit status. All string arguments are converted to null-terminated C strings before the fork, since heap allocation after fork is unsafe in a multithreaded process.
 
 ### 4.5 I/O Redirection Mechanism
 
-Redirection is handled at two levels depending on whether the command is a builtin or an external.
-
-For **builtins**, the REPL loop opens the target file (in truncate or append mode as specified) and wraps it in a generic writer. The builtin writes to that writer instead of stdout or stderr. This happens entirely in the parent process with no forking.
-
-For **external commands**, redirection is applied in the child process after fork but before exec. The child opens the target file with the appropriate flags (O_WRONLY | O_CREAT, plus O_TRUNC or O_APPEND), calls dup2 to replace fd 1 (stdout) or fd 2 (stderr) with the opened file descriptor, then closes the original fd. When exec replaces the child's memory, the new program inherits the redirected file descriptors and writes to the file without knowing it.
-
-Both paths support independent stdout and stderr redirection in the same command.
+For **builtins**, the REPL opens the target file and wraps it in a generic writer that the builtin writes to instead of stdout/stderr. For **external commands**, redirection is applied in the child after fork but before exec: the child opens the target file with the appropriate flags, calls dup2 to replace the standard fd, and closes the original. Both paths support independent stdout and stderr redirection in the same command.
 
 ### 4.6 Tab Completion
 
@@ -499,39 +437,39 @@ The shell's quoting rules (single quotes literal, double quotes with limited esc
 
 ### 6.1 Implementation Status Matrix
 
-| Component                                             | Status      | Notes                                                           |
-| ----------------------------------------------------- | ----------- | --------------------------------------------------------------- |
-| PTY allocation (openpty)                              | Done        | Via nix crate                                                   |
-| Session establishment (fork/setsid/ioctl/dup2/execvp) | Done        | Full POSIX ceremony                                             |
-| Self-re-exec launcher                                 | Done        | /proc/self/exe + --rushx-shell                                  |
-| GTK4 window + DrawingArea                             | Done        | Cairo toy text API rendering                                    |
-| Reader thread + mpsc channel                          | Done        | 4096-byte buffer, blocking read                                 |
-| Poll timer (16 ms)                                    | Done        | Drains channel, triggers redraw                                 |
+| Component                                             | Status      | Notes                                                          |
+| ----------------------------------------------------- | ----------- | -------------------------------------------------------------- |
+| PTY allocation (openpty)                              | Done        | Via nix crate                                                  |
+| Session establishment (fork/setsid/ioctl/dup2/execvp) | Done        | Full POSIX ceremony                                            |
+| Self-re-exec launcher                                 | Done        | /proc/self/exe + --rushx-shell                                 |
+| GTK4 window + DrawingArea                             | Done        | Cairo toy text API rendering                                   |
+| Reader thread + mpsc channel                          | Done        | 4096-byte buffer, blocking read                                |
+| Poll timer (16 ms)                                    | Done        | Drains channel, triggers redraw                                |
 | PTY output state machine                              | Done        | Full ANSI parser with SGR, ED, BEL (see Section 3.5)           |
-| ANSI color rendering                                  | Done        | 16-color palette + 256-color + 24-bit RGB, per-segment styling  |
-| Bell support (BEL 0x07)                               | Done        | Detected by parser, played via GDK system beep                  |
-| Cursor rendering + blink                              | Done        | Block cursor, 500 ms blink                                      |
-| Keyboard input + ANSI escapes                         | Done        | Ctrl, arrows, Delete, Home/End, UTF-8                           |
-| REPL loop                                             | Done        | Raw mode input, user@hostname:cwd prompt, tab completion        |
-| Argument tokenizer                                    | Done        | POSIX-style single/double quote handling                        |
-| Redirection parser                                    | Done        | >, >>, 1>, 1>>, 2>, 2>>                                         |
-| Builtin commands                                      | Done        | exit, echo (-e/-n), type, pwd, cd                               |
-| Tab completion                                        | Done        | Command names (builtins + PATH) and file/directory paths        |
+| ANSI color rendering                                  | Done        | 16-color palette + 256-color + 24-bit RGB, per-segment styling |
+| Bell support (BEL 0x07)                               | Done        | Detected by parser, played via GDK system beep                 |
+| Cursor rendering + blink                              | Done        | Block cursor, 500 ms blink                                     |
+| Keyboard input + ANSI escapes                         | Done        | Ctrl, arrows, Delete, Home/End, UTF-8                          |
+| REPL loop                                             | Done        | Raw mode input, user@hostname:cwd prompt, tab completion       |
+| Argument tokenizer                                    | Done        | POSIX-style single/double quote handling                       |
+| Redirection parser                                    | Done        | >, >>, 1>, 1>>, 2>, 2>>                                        |
+| Builtin commands                                      | Done        | exit, echo (-e/-n), type, pwd, cd                              |
+| Tab completion                                        | Done        | Command names (builtins + PATH) and file/directory paths       |
 | Raw terminal mode                                     | Done        | Disables ICANON/ECHO/ISIG/ICRNL, restores before exec          |
-| External command execution                            | Done        | fork/execvp/waitpid                                             |
-| PATH resolution                                       | Done        | Search + execute-bit check                                      |
-| Lexer (token stream)                                  | Stub        | lexer.rs exists but is empty                                    |
-| AST                                                   | Stub        | ast.rs exists but is empty                                      |
-| Variable/tilde expansion                              | Stub        | expand/vars.rs empty                                            |
-| Glob expansion                                        | Stub        | expand/glob.rs empty                                            |
-| Pipeline ( \| )                                       | Not started |                                                                 |
-| Input redirection ( < )                               | Not started |                                                                 |
-| Job control (bg/fg/jobs)                              | Not started |                                                                 |
-| Signal handling (SIGINT/SIGTSTP)                      | Not started | Relies on kernel defaults                                       |
-| Scrollback buffer                                     | Not started | Only visible lines are kept                                     |
-| Cursor movement (CUP, CUU, etc.)                     | Not started | CSI cursor sequences are discarded                              |
-| Termios configuration                                 | Not started | PTY uses kernel defaults                                        |
-| Runtime config file                                   | Not started | All values are compile-time consts                              |
+| External command execution                            | Done        | fork/execvp/waitpid                                            |
+| PATH resolution                                       | Done        | Search + execute-bit check                                     |
+| Lexer (token stream)                                  | Stub        | lexer.rs exists but is empty                                   |
+| AST                                                   | Stub        | ast.rs exists but is empty                                     |
+| Variable/tilde expansion                              | Stub        | expand/vars.rs empty                                           |
+| Glob expansion                                        | Stub        | expand/glob.rs empty                                           |
+| Pipeline ( \| )                                       | Not started |                                                                |
+| Input redirection ( < )                               | Not started |                                                                |
+| Job control (bg/fg/jobs)                              | Not started |                                                                |
+| Signal handling (SIGINT/SIGTSTP)                      | Not started | Relies on kernel defaults                                      |
+| Scrollback buffer                                     | Not started | Only visible lines are kept                                    |
+| Cursor movement (CUP, CUU, etc.)                      | Not started | CSI cursor sequences are discarded                             |
+| Termios configuration                                 | Not started | PTY uses kernel defaults                                       |
+| Runtime config file                                   | Not started | All values are compile-time consts                             |
 
 ### 6.2 Known Limitations
 
